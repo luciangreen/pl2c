@@ -163,11 +163,13 @@ All example programs are provided and working:
 
 ## Memory Safety
 
-Memory allocation checks have been added to prevent crashes:
-- All malloc calls checked for NULL
-- All realloc calls checked for NULL
+Memory allocation checks have been added to the test suite:
+- All malloc calls in test_unification.c checked for NULL
+- All realloc calls in test_unification.c checked for NULL
 - Proper cleanup in error cases
 - Protected against integer overflow in size calculations
+
+Note: The fallback C code in pl2c.sh (used when SWI-Prolog is not available) contains template code with basic error handling. For production use, the Prolog-based translator (pl2c.pl) should be used with SWI-Prolog, or the generated C code should be enhanced with additional safety checks as needed.
 
 ## Known Limitations
 
