@@ -109,6 +109,7 @@ typedef struct {
     bindings_t bindings;
     int cut_level;
     bool failed;
+    int next_var_id;  /* Counter for generating unique variable IDs */
 } prolog_state_t;
 
 /* Function prototypes */
@@ -128,17 +129,17 @@ void perform_cut(prolog_state_t* state);
 
 /* Example compiled predicate: member/2 */
 bool member_2(prolog_state_t* state, term_t* elem, term_t* list) {
-    list = deref(state, list);
+    term_t* list_deref = deref(state, list);
     
-    if (list->type == TERM_LIST) {
+    if (list_deref->type == TERM_LIST) {
         /* First clause: member(X, [X|_]) */
-        if (unify(state, elem, list->data.list.head)) {
+        if (unify(state, elem, list_deref->data.list.head)) {
             return true;
         }
         
         /* Backtrack and try second clause: member(X, [_|T]) :- member(X, T) */
         state->failed = false;
-        return member_2(state, elem, list->data.list.tail);
+        return member_2(state, elem, list_deref->data.list.tail);
     }
     
     state->failed = true;
@@ -147,20 +148,20 @@ bool member_2(prolog_state_t* state, term_t* elem, term_t* list) {
 
 /* Example compiled predicate: append/3 */
 bool append_3(prolog_state_t* state, term_t* l1, term_t* l2, term_t* l3) {
-    l1 = deref(state, l1);
+    term_t* l1_deref = deref(state, l1);
     
     /* First clause: append([], L, L) */
-    if (l1->type == TERM_NIL) {
+    if (l1_deref->type == TERM_NIL) {
         return unify(state, l2, l3);
     }
     
     /* Second clause: append([H|T1], L2, [H|T3]) :- append(T1, L2, T3) */
-    if (l1->type == TERM_LIST) {
-        term_t* h = l1->data.list.head;
-        term_t* t1 = l1->data.list.tail;
+    if (l1_deref->type == TERM_LIST) {
+        term_t* h = l1_deref->data.list.head;
+        term_t* t1 = l1_deref->data.list.tail;
         
         /* Create result list [H|T3] where T3 is a new variable */
-        term_t* t3 = create_var(999);  /* New variable */
+        term_t* t3 = create_var(state->next_var_id++);  /* New variable */
         term_t* result = create_list(h, t3);
         
         if (unify(state, l3, result)) {
@@ -174,26 +175,28 @@ bool append_3(prolog_state_t* state, term_t* l1, term_t* l2, term_t* l3) {
 
 /* Example compiled predicate: factorial/2 */
 bool factorial_2(prolog_state_t* state, term_t* n, term_t* result) {
-    n = deref(state, n);
+    term_t* n_deref = deref(state, n);
     
     /* Base case: factorial(0, 1) */
-    if (n->type == TERM_INT && n->data.int_val == 0) {
+    if (n_deref->type == TERM_INT && n_deref->data.int_val == 0) {
         term_t* one = create_int(1);
         return unify(state, result, one);
     }
     
     /* Recursive case: factorial(N, F) :- N > 0, N1 is N-1, factorial(N1, F1), F is N*F1 */
-    if (n->type == TERM_INT && n->data.int_val > 0) {
-        int n_val = n->data.int_val;
+    if (n_deref->type == TERM_INT && n_deref->data.int_val > 0) {
+        int n_val = n_deref->data.int_val;
         int n1_val = n_val - 1;
         
         term_t* n1 = create_int(n1_val);
-        term_t* f1 = create_var(1000);
+        
+        /* Create new variable for F1 with unique ID */
+        term_t* f1 = create_var(state->next_var_id++);
         
         if (factorial_2(state, n1, f1)) {
-            f1 = deref(state, f1);
-            if (f1->type == TERM_INT) {
-                int result_val = n_val * f1->data.int_val;
+            term_t* f1_deref = deref(state, f1);
+            if (f1_deref->type == TERM_INT) {
+                int result_val = n_val * f1_deref->data.int_val;
                 term_t* result_term = create_int(result_val);
                 return unify(state, result, result_term);
             }
@@ -365,6 +368,7 @@ void init_state(prolog_state_t* state) {
     state->bindings.capacity = 0;
     state->cut_level = 0;
     state->failed = false;
+    state->next_var_id = 1000;  /* Start variable IDs from 1000 */
 }
 
 void free_state(prolog_state_t* state) {

@@ -1,0 +1,28 @@
+# Build artifacts
+*.o
+*.out
+*.exe
+*_test
+simple_test
+simple_test.c
+nondet_test
+nondet_test.c
+
+# Test outputs
+prolog_output.txt
+c_output.txt
+
+# Compiled binaries in tests/
+tests/test_unification
+tests/*.o
+
+# Editor and IDE files
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# OS files
+.DS_Store
+Thumbs.db
