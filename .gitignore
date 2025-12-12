@@ -3,10 +3,13 @@
 *.out
 *.exe
 *_test
+*_test.c
 simple_test
 simple_test.c
 nondet_test
 nondet_test.c
+comprehensive_test
+comprehensive_test.c
 
 # Test outputs
 prolog_output.txt

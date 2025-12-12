@@ -75,6 +75,7 @@ void free_state(prolog_state_t* state);
 /* Term creation functions */
 term_t* create_var(int id) {
     term_t* t = malloc(sizeof(term_t));
+    if (!t) return NULL;
     t->type = TERM_VAR;
     t->data.var_id = id;
     return t;
@@ -82,13 +83,19 @@ term_t* create_var(int id) {
 
 term_t* create_atom(const char* name) {
     term_t* t = malloc(sizeof(term_t));
+    if (!t) return NULL;
     t->type = TERM_ATOM;
     t->data.atom = strdup(name);
+    if (!t->data.atom) {
+        free(t);
+        return NULL;
+    }
     return t;
 }
 
 term_t* create_int(int val) {
     term_t* t = malloc(sizeof(term_t));
+    if (!t) return NULL;
     t->type = TERM_INT;
     t->data.int_val = val;
     return t;
@@ -96,10 +103,20 @@ term_t* create_int(int val) {
 
 term_t* create_compound(const char* functor, int arity, term_t** args) {
     term_t* t = malloc(sizeof(term_t));
+    if (!t) return NULL;
     t->type = TERM_COMPOUND;
     t->data.compound.functor = strdup(functor);
+    if (!t->data.compound.functor) {
+        free(t);
+        return NULL;
+    }
     t->data.compound.arity = arity;
     t->data.compound.args = malloc(sizeof(term_t*) * arity);
+    if (!t->data.compound.args) {
+        free(t->data.compound.functor);
+        free(t);
+        return NULL;
+    }
     for (int i = 0; i < arity; i++) {
         t->data.compound.args[i] = args[i];
     }
@@ -108,6 +125,7 @@ term_t* create_compound(const char* functor, int arity, term_t** args) {
 
 term_t* create_list(term_t* head, term_t* tail) {
     term_t* t = malloc(sizeof(term_t));
+    if (!t) return NULL;
     t->type = TERM_LIST;
     t->data.list.head = head;
     t->data.list.tail = tail;
@@ -116,6 +134,7 @@ term_t* create_list(term_t* head, term_t* tail) {
 
 term_t* create_nil() {
     term_t* t = malloc(sizeof(term_t));
+    if (!t) return NULL;
     t->type = TERM_NIL;
     return t;
 }
@@ -137,9 +156,12 @@ bool unify(prolog_state_t* state, term_t* t1, term_t* t2) {
     
     if (t1->type == TERM_VAR) {
         if (state->bindings.size >= state->bindings.capacity) {
-            state->bindings.capacity = state->bindings.capacity * 2 + 1;
-            state->bindings.bindings = realloc(state->bindings.bindings, 
-                sizeof(binding_t) * state->bindings.capacity);
+            int new_capacity = state->bindings.capacity * 2 + 1;
+            binding_t* new_bindings = realloc(state->bindings.bindings, 
+                sizeof(binding_t) * new_capacity);
+            if (!new_bindings) return false;
+            state->bindings.bindings = new_bindings;
+            state->bindings.capacity = new_capacity;
         }
         state->bindings.bindings[state->bindings.size].var_id = t1->data.var_id;
         state->bindings.bindings[state->bindings.size].value = t2;
