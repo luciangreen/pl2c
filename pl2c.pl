@@ -1399,6 +1399,15 @@ bool atom_concat_3(prolog_state_t* state, term_t* atom1, term_t* atom2, term_t* 
         return false;
     }
     
+    /* Check for potential overflow - snprintf is safe but truncates */
+    size_t len1 = strlen(a1->data.atom);
+    size_t len2 = strlen(a2->data.atom);
+    if (len1 + len2 >= 2047) {
+        /* Result would be truncated */
+        state->failed = true;
+        return false;
+    }
+    
     char buffer[2048];
     snprintf(buffer, sizeof(buffer), "%s%s", a1->data.atom, a2->data.atom);
     return unify(state, result, create_atom(buffer));
@@ -1466,6 +1475,10 @@ bool functor_3(prolog_state_t* state, term_t* term, term_t* functor, term_t* ari
         } else {
             /* Create compound with unbound variables as args */
             term_t** args = malloc(sizeof(term_t*) * a->data.int_val);
+            if (!args) {
+                state->failed = true;
+                return false;
+            }
             for (int i = 0; i < a->data.int_val; i++) {
                 args[i] = create_var(i);
             }
@@ -1574,6 +1587,9 @@ term_t* copy_term_helper(prolog_state_t* state, term_t* term, int* var_offset) {
         return create_list(new_head, new_tail);
     } else if (t->type == TERM_COMPOUND) {
         term_t** new_args = malloc(sizeof(term_t*) * t->data.compound.arity);
+        if (!new_args) {
+            return create_var(0); /* fallback on malloc failure */
+        }
         for (int i = 0; i < t->data.compound.arity; i++) {
             new_args[i] = copy_term_helper(state, t->data.compound.args[i], var_offset);
         }
@@ -1645,7 +1661,8 @@ int compare_keys_for_keysort(const void* a, const void* b) {
     term_t* t2 = *(term_t**)b;
     /* Both should be compound terms with functor "-" and arity 2 */
     /* Compare only the first argument (the key) */
-    if (t1->type == TERM_COMPOUND && t2->type == TERM_COMPOUND) {
+    if (t1->type == TERM_COMPOUND && t2->type == TERM_COMPOUND &&
+        t1->data.compound.arity >= 1 && t2->data.compound.arity >= 1) {
         return term_compare(t1->data.compound.args[0], t2->data.compound.args[0]);
     }
     return 0;
@@ -1673,6 +1690,10 @@ bool sort_2(prolog_state_t* state, term_t* list, term_t* sorted) {
     
     /* Copy elements to array */
     term_t** elements = malloc(sizeof(term_t*) * count);
+    if (!elements) {
+        state->failed = true;
+        return false;
+    }
     current = l;
     for (int i = 0; i < count; i++) {
         elements[i] = current->data.list.head;
@@ -1716,6 +1737,10 @@ bool msort_2(prolog_state_t* state, term_t* list, term_t* sorted) {
     
     /* Copy elements to array */
     term_t** elements = malloc(sizeof(term_t*) * count);
+    if (!elements) {
+        state->failed = true;
+        return false;
+    }
     current = l;
     for (int i = 0; i < count; i++) {
         elements[i] = current->data.list.head;
@@ -1758,6 +1783,10 @@ bool keysort_2(prolog_state_t* state, term_t* list, term_t* sorted) {
     
     /* Copy elements to array */
     term_t** elements = malloc(sizeof(term_t*) * count);
+    if (!elements) {
+        state->failed = true;
+        return false;
+    }
     current = l;
     for (int i = 0; i < count; i++) {
         term_t* elem = deref(state, current->data.list.head);
