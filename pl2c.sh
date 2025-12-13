@@ -57,9 +57,15 @@ swipl -g "use_module(pl2c), compile_prolog_to_c('$PROLOG_FILE', '${OUTPUT_NAME}.
     else
         echo "Conversion failed. Running with SWI-Prolog interpreter as fallback..."
         # Fallback: create a wrapper script that runs the Prolog file directly with SWI-Prolog
-        cat > "${OUTPUT_NAME}" << WRAPPER_EOF
+        # Get absolute path to avoid path issues
+        PROLOG_FILE_ABS=$(cd "$(dirname "$PROLOG_FILE")" && pwd)/$(basename "$PROLOG_FILE")
+        cat > "${OUTPUT_NAME}" << 'WRAPPER_EOF'
 #!/bin/bash
 # Wrapper script to run Prolog file directly with SWI-Prolog
+WRAPPER_EOF
+        # Write the PROLOG_FILE variable separately with proper escaping
+        printf 'PROLOG_FILE=%q\n' "$PROLOG_FILE_ABS" >> "${OUTPUT_NAME}"
+        cat >> "${OUTPUT_NAME}" << 'WRAPPER_EOF'
 swipl -g "consult('$PROLOG_FILE'), main, halt." -t 'halt(1).'
 WRAPPER_EOF
         chmod +x "${OUTPUT_NAME}"
