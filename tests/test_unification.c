@@ -252,7 +252,6 @@ void test_unify_variables() {
     init_state(&state);
     
     term_t* v1 = create_var(1);
-    term_t* v2 = create_var(2);
     term_t* a = create_atom("test");
     
     assert(unify(&state, v1, a) == true);

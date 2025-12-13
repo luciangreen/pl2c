@@ -50,6 +50,7 @@ swipl -g "use_module(pl2c), compile_prolog_to_c('$PROLOG_FILE', '${OUTPUT_NAME}.
     echo "Conversion failed. Running simple conversion..."
     # Fallback: create a basic C program
     cat > "${OUTPUT_NAME}.c" << 'EOF'
+#define _POSIX_C_SOURCE 200809L
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>

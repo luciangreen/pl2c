@@ -45,7 +45,8 @@ translate_program(Clauses, CCode) :-
 % Generates the C header with includes and data structures
 generate_c_header(Header) :-
     Header = 
-'#include <stdio.h>
+'#define _POSIX_C_SOURCE 200809L
+#include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 #include <stdbool.h>
