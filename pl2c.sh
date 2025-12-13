@@ -483,7 +483,7 @@ EOF
 }
 
 echo "Compiling C code..."
-gcc -o "$OUTPUT_NAME" "${OUTPUT_NAME}.c" -std=c99 -Wall -Wno-unused-variable 2>&1 | grep -v "warning:" || true
+gcc -o "$OUTPUT_NAME" "${OUTPUT_NAME}.c" -std=c99 -Wall -Wno-unused-variable -lm 2>&1 | grep -v "warning:" || true
 
 if [ $? -eq 0 ]; then
     echo "Compilation successful!"

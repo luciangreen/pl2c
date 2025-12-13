@@ -108,6 +108,7 @@ typedef struct {
     bindings_t bindings;
     int cut_level;
     bool failed;
+    int next_var_id;
 } prolog_state_t;
 
 /* Function prototypes */
@@ -138,7 +139,7 @@ bool neqeq_2(prolog_state_t* state, term_t* arg1, term_t* arg2);
 bool is_2(prolog_state_t* state, term_t* arg1, term_t* arg2);
 
 /* Built-in I/O predicates */
-void print_term(term_t* term);
+void print_term(prolog_state_t* state, term_t* term);
 bool write_1(prolog_state_t* state, term_t* arg1);
 bool format_2(prolog_state_t* state, term_t* arg1, term_t* arg2);
 bool nl_0(prolog_state_t* state);
@@ -315,6 +316,8 @@ sanitize_predicate_name('@>=', 'term_gte') :- !.
 sanitize_predicate_name('=..', 'univ') :- !.
 sanitize_predicate_name('!', 'cut') :- !.
 sanitize_predicate_name('true', 'true') :- !.
+sanitize_predicate_name('->', 'if_then') :- !.
+sanitize_predicate_name(';', 'semicolon') :- !.
 sanitize_predicate_name(Name, Name).
 
 %% translate_predicate_clauses(+Clauses, +Index, -CCode)
@@ -333,13 +336,20 @@ translate_single_clause((Head :- Body), Index, CCode) :-
     append(HeadVars, BodyVars, AllVars),
     sort(AllVars, UniqueVars),
     generate_var_declarations(UniqueVars, VarDecls),
-    translate_head_unifications(Head, Index, HeadCode),
+    translate_head_unifications_with_check(Head, Index, HeadCode),
     translate_body(Body, BodyCode, 0),
     format(atom(CCode), 
 '    /* Clause ~w: ~w :- ~w */
     {
-~w~w~w
-        return true;
+        int saved_bindings_size = state->bindings.size;
+~w~w
+            do {
+~w            } while (0);
+            if (!state->failed) return true;
+        }
+        /* Restore bindings for next clause */
+        state->bindings.size = saved_bindings_size;
+        state->failed = false;
     }
 ', [Index, Head, Body, VarDecls, HeadCode, BodyCode]).
 
@@ -348,12 +358,17 @@ translate_single_clause(Head, Index, CCode) :-
     collect_variables(Head, HeadVars),
     sort(HeadVars, UniqueVars),
     generate_var_declarations(UniqueVars, VarDecls),
-    translate_head_unifications(Head, Index, HeadCode),
+    translate_head_unifications_with_check(Head, Index, HeadCode),
     format(atom(CCode), 
 '    /* Clause ~w: ~w */
     {
+        int saved_bindings_size = state->bindings.size;
 ~w~w
-        return true;
+            return true;
+        }
+        /* Restore bindings for next clause */
+        state->bindings.size = saved_bindings_size;
+        state->failed = false;
     }
 ', [Index, Head, VarDecls, HeadCode]).
 
@@ -382,15 +397,42 @@ generate_var_declarations(Vars, Decls) :-
 
 generate_var_decls_with_ids([], _, []).
 generate_var_decls_with_ids([V|Vs], N, [Decl|Decls]) :-
-    format(atom(Decl), '        term_t* var_~w = create_var(~w);\n', [V, N]),
+    format(atom(Decl), '        term_t* var_~w = create_var(state->next_var_id++);\n', [V]),
     N1 is N + 1,
     generate_var_decls_with_ids(Vs, N1, Decls).
 
 %% translate_head_unifications(+Head, +Index, -CCode)
-% Generates code to unify head arguments with actual parameters
+% Generates code to unify head arguments with actual parameters (old style with return)
 translate_head_unifications(Head, _, CCode) :-
     extract_predicate_info(Head, _, _, Args),
     translate_head_args(Args, 1, CCode).
+
+%% translate_head_unifications_with_check(+Head, +Index, -CCode)
+% Generates code to unify head arguments with conditional check instead of return
+translate_head_unifications_with_check(Head, _, CCode) :-
+    extract_predicate_info(Head, _, _, Args),
+    translate_head_args_with_check(Args, 1, [], UnifyList),
+    ( UnifyList = [] ->
+        CCode = '        if (true) {\n'
+    ;
+        atomic_list_concat(UnifyList, ' &&\n            ', UnifyCondition),
+        format(atom(CCode), '        if (~w) {\n', [UnifyCondition])
+    ).
+
+translate_head_args_with_check([], _, Acc, Acc).
+translate_head_args_with_check([Arg|Args], N, Acc, Result) :-
+    translate_head_arg_check(Arg, N, ArgCode),
+    N1 is N + 1,
+    append(Acc, [ArgCode], NewAcc),
+    translate_head_args_with_check(Args, N1, NewAcc, Result).
+
+translate_head_arg_check(Var, N, CCode) :-
+    var(Var),
+    !,
+    format(atom(CCode), 'unify(state, var_~w, arg~w)', [Var, N]).
+translate_head_arg_check(Arg, N, CCode) :-
+    term_to_c_expr(Arg, CExpr),
+    format(atom(CCode), 'unify(state, ~w, arg~w)', [CExpr, N]).
 
 translate_head_args([], _, '').
 translate_head_args([Arg|Args], N, CCode) :-
@@ -449,7 +491,7 @@ translate_args_to_params(Args, Params) :-
 %% translate_body(+Body, -CCode, +Depth)
 % Translates clause body to C code with proper control flow
 translate_body(true, '    /* true */\n', _) :- !.
-translate_body(fail, '    state->failed = true;\n    return false;\n', _) :- !.
+translate_body(fail, '    state->failed = true;\n    break;\n', _) :- !.
 translate_body(!, CCode, _) :-
     !,
     CCode = '    perform_cut(state);\n'.
@@ -513,7 +555,7 @@ translate_body(Call, CCode, _) :-
     sanitize_predicate_name(Name, SanitizedName),
     format(atom(FuncName), '~w_~w', [SanitizedName, Arity]),
     translate_call_args(Args, ArgStr),
-    format(atom(CCode), '    if (!~w(state~w)) return false;\n', [FuncName, ArgStr]).
+    format(atom(CCode), '    if (!~w(state~w)) { state->failed = true; break; }\n', [FuncName, ArgStr]).
 
 translate_call_args([], '').
 translate_call_args([Arg|Args], Result) :-
@@ -941,7 +983,9 @@ bool is_2(prolog_state_t* state, term_t* arg1, term_t* arg2) {
 }
 
 /* Built-in I/O predicates */
-void print_term(term_t* term) {
+void print_term(prolog_state_t* state, term_t* term) {
+    term = deref(state, term);
+    
     if (term->type == TERM_ATOM) {
         printf("%s", term->data.atom);
     } else if (term->type == TERM_INT) {
@@ -952,15 +996,15 @@ void print_term(term_t* term) {
         printf("[");
         term_t* current = term;
         while (current->type == TERM_LIST) {
-            print_term(current->data.list.head);
-            current = current->data.list.tail;
+            print_term(state, current->data.list.head);
+            current = deref(state, current->data.list.tail);
             if (current->type == TERM_LIST) {
                 printf(", ");
             }
         }
         if (current->type != TERM_NIL) {
             printf("|");
-            print_term(current);
+            print_term(state, current);
         }
         printf("]");
     } else if (term->type == TERM_VAR) {
@@ -968,7 +1012,7 @@ void print_term(term_t* term) {
     } else if (term->type == TERM_COMPOUND) {
         printf("%s(", term->data.compound.functor);
         for (int i = 0; i < term->data.compound.arity; i++) {
-            print_term(term->data.compound.args[i]);
+            print_term(state, term->data.compound.args[i]);
             if (i < term->data.compound.arity - 1) {
                 printf(", ");
             }
@@ -979,7 +1023,7 @@ void print_term(term_t* term) {
 
 bool write_1(prolog_state_t* state, term_t* arg1) {
     term_t* t = deref(state, arg1);
-    print_term(t);
+    print_term(state, t);
     return true;
 }
 
@@ -998,8 +1042,8 @@ bool format_2(prolog_state_t* state, term_t* arg1, term_t* arg2) {
     for (int i = 0; fmt[i] != 0; i++) {
         if (fmt[i] == 126 && fmt[i+1] == 119) {  /* ~w */
             if (current_arg->type == TERM_LIST) {
-                print_term(current_arg->data.list.head);
-                current_arg = current_arg->data.list.tail;
+                print_term(state, current_arg->data.list.head);
+                current_arg = deref(state, current_arg->data.list.tail);
             }
             i++;  /* Skip the w */
         } else {
@@ -1957,6 +2001,7 @@ void init_state(prolog_state_t* state) {
     state->bindings.capacity = 0;
     state->cut_level = 0;
     state->failed = false;
+    state->next_var_id = 1000;
 }
 
 void free_state(prolog_state_t* state) {
@@ -1975,7 +2020,8 @@ int main(int argc, char** argv) {
     
     printf("Prolog-to-C compiled program\\n");
     
-    /* Call compiled predicates here */
+    /* Call main/0 predicate if it exists */
+    main_0(&state);
     
     free_state(&state);
     return 0;
