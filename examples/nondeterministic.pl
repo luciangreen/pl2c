@@ -23,8 +23,6 @@ first_solution(X) :- color(X), !.
 
 main :-
     write('Testing nondeterministic predicates\n'),
-    findall(C, color(C), Colors),
-    format('All colors: ~w\n', [Colors]),
     reachable(a, d),
     write('Path from a to d exists\n'),
     first_solution(C),
