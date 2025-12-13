@@ -24,6 +24,8 @@ A comprehensive Prolog-to-C compiler that converts Prolog code into equivalent C
   - Meta-predicates: `call/1`, `call/2`, `call/3`, `apply/2`
   - Control: `true/0`, `once/1`, `ignore/1`
 
+For a complete list of supported ISO Prolog standard features, see [ISO_FEATURES.md](ISO_FEATURES.md).
+
 ## Architecture
 
 The compiler consists of several key components:
