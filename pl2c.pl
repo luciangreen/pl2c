@@ -188,6 +188,7 @@ bool functor_3(prolog_state_t* state, term_t* term, term_t* functor, term_t* ari
 bool arg_3(prolog_state_t* state, term_t* n, term_t* term, term_t* arg);
 bool univ_2(prolog_state_t* state, term_t* term, term_t* list);
 bool copy_term_2(prolog_state_t* state, term_t* term, term_t* copy);
+term_t* copy_term_helper(prolog_state_t* state, term_t* term, int* var_offset);
 
 /* Control predicates (ISO) */
 bool true_0(prolog_state_t* state);
@@ -598,7 +599,30 @@ translate_body((A ; B), CCode, Depth) :-
 translate_body(findall(Template, Goal, Result), CCode, Depth) :-
     !,
     % findall/3: enumerate all solutions
-    translate_body(Goal, GoalCode, Depth),
+    % Note: This is a simplified implementation that uses the outer state's variables
+    % A proper implementation would create an isolated variable context
+    
+    % Generate the goal code - this will use 'state' in the generated code
+    translate_body(Goal, GoalCodeTemplate, Depth),
+    % Replace 'state,' with '&findall_state,' and 'state)' with '&findall_state)'
+    % and 'state->' with 'findall_state.'
+    % This handles function calls like pred(state, ...) and state->failed
+    atom_codes(GoalCodeTemplate, GoalCodes),
+    atom_codes('state,', StateCommaCodes),
+    atom_codes('&findall_state,', FindallStateCommaCodes),
+    replace_all_occurrences(GoalCodes, StateCommaCodes, FindallStateCommaCodes, TempCodes1),
+    atom_codes('state)', StateParenCodes),
+    atom_codes('&findall_state)', FindallStateParenCodes),
+    replace_all_occurrences(TempCodes1, StateParenCodes, FindallStateParenCodes, TempCodes2),
+    atom_codes('state->', StateArrowCodes),
+    atom_codes('findall_state.', FindallStateDotCodes),
+    replace_all_occurrences(TempCodes2, StateArrowCodes, FindallStateDotCodes, ModifiedGoalCodes),
+    atom_codes(GoalCode, ModifiedGoalCodes),
+    
+    % Get C expressions for Template and Result
+    term_to_c_expr(Template, TemplateExpr),
+    term_to_c_expr(Result, ResultExpr),
+    
     format(atom(CCode),
 '    /* findall/3 */
     {
@@ -607,24 +631,60 @@ translate_body(findall(Template, Goal, Result), CCode, Depth) :-
         prolog_state_t findall_state;
         init_state(&findall_state);
         
-        /* Enumerate solutions */
+        /* Copy current bindings to findall_state so variables are accessible */
+        findall_state.bindings.capacity = state->bindings.capacity;
+        findall_state.bindings.size = state->bindings.size;
+        if (state->bindings.size > 0) {
+            findall_state.bindings.bindings = malloc(sizeof(binding_t) * state->bindings.capacity);
+            memcpy(findall_state.bindings.bindings, state->bindings.bindings,
+                   sizeof(binding_t) * state->bindings.size);
+        }
+        findall_state.next_var_id = state->next_var_id;
+        
+        /* Save initial bindings for backtracking */
+        int initial_bindings_size = findall_state.bindings.size;
+        
+        /* Enumerate solutions by forcing failure and retrying */
+        bool first_call = true;
         while (true) {
-~w
-            if (state->failed) break;
+            /* Reset state for next attempt */
+            if (!first_call) {
+                findall_state.bindings.size = initial_bindings_size;
+                findall_state.failed = false;
+            }
+            first_call = false;
             
-            /* Collect solution */
+            /* Try to find a solution */
+~w
+            if (findall_state.failed) break;
+            
+            /* Collect solution - copy the instantiated template */
             solution_count++;
             solutions = realloc(solutions, sizeof(term_t*) * solution_count);
-            /* Store template instance */
             
-            /* Force backtracking */
+            /* Copy the instantiated template from findall_state */
+            int var_offset = 0;
+            solutions[solution_count - 1] = copy_term_helper(&findall_state, ~w, &var_offset);
+            
+            /* Force backtracking to find next solution */
             if (!pop_choice_point(&findall_state)) break;
         }
         
-        /* Build result list */
+        /* Build result list from solutions */
+        term_t* result_list = create_nil();
+        for (int i = solution_count - 1; i >= 0; i--) {
+            result_list = create_list(solutions[i], result_list);
+        }
+        if (solutions) free(solutions);
+        
+        /* Unify result with the collected list */
+        if (!unify(state, ~w, result_list)) {
+            state->failed = true;
+        }
+        
         free_state(&findall_state);
     }
-', [GoalCode]).
+', [GoalCode, TemplateExpr, ResultExpr]).
 translate_body(Call, CCode, _) :-
     % Regular predicate call
     extract_predicate_info(Call, Name, Arity, Args),
@@ -638,6 +698,19 @@ translate_call_args([Arg|Args], Result) :-
     term_to_c_expr(Arg, CExpr),
     translate_call_args(Args, Rest),
     format(atom(Result), ', ~w~w', [CExpr, Rest]).
+
+%% replace_all_occurrences(+Input, +Pattern, +Replacement, -Output)
+% Replaces all occurrences of Pattern in Input with Replacement
+replace_all_occurrences([], _, _, []).
+replace_all_occurrences(Input, Pattern, Replacement, Output) :-
+    append(Pattern, Rest, Input),
+    !,
+    % Found a match, replace and continue
+    append(Replacement, RestOutput, Output),
+    replace_all_occurrences(Rest, Pattern, Replacement, RestOutput).
+replace_all_occurrences([C|Rest], Pattern, Replacement, [C|Output]) :-
+    % No match, keep character and continue
+    replace_all_occurrences(Rest, Pattern, Replacement, Output).
 
 %% escape_c_string(+InputCodes, -OutputCodes)
 % Escapes special characters for C string literals
