@@ -108,6 +108,7 @@ typedef struct {
     bindings_t bindings;
     int cut_level;
     bool failed;
+    int next_var_id;
 } prolog_state_t;
 
 /* Function prototypes */
@@ -333,13 +334,20 @@ translate_single_clause((Head :- Body), Index, CCode) :-
     append(HeadVars, BodyVars, AllVars),
     sort(AllVars, UniqueVars),
     generate_var_declarations(UniqueVars, VarDecls),
-    translate_head_unifications(Head, Index, HeadCode),
+    translate_head_unifications_with_check(Head, Index, HeadCode),
     translate_body(Body, BodyCode, 0),
     format(atom(CCode), 
 '    /* Clause ~w: ~w :- ~w */
     {
-~w~w~w
-        return true;
+        int saved_bindings_size = state->bindings.size;
+~w~w
+            do {
+~w            } while (0);
+            if (!state->failed) return true;
+        }
+        /* Restore bindings for next clause */
+        state->bindings.size = saved_bindings_size;
+        state->failed = false;
     }
 ', [Index, Head, Body, VarDecls, HeadCode, BodyCode]).
 
@@ -348,12 +356,17 @@ translate_single_clause(Head, Index, CCode) :-
     collect_variables(Head, HeadVars),
     sort(HeadVars, UniqueVars),
     generate_var_declarations(UniqueVars, VarDecls),
-    translate_head_unifications(Head, Index, HeadCode),
+    translate_head_unifications_with_check(Head, Index, HeadCode),
     format(atom(CCode), 
 '    /* Clause ~w: ~w */
     {
+        int saved_bindings_size = state->bindings.size;
 ~w~w
-        return true;
+            return true;
+        }
+        /* Restore bindings for next clause */
+        state->bindings.size = saved_bindings_size;
+        state->failed = false;
     }
 ', [Index, Head, VarDecls, HeadCode]).
 
@@ -382,15 +395,42 @@ generate_var_declarations(Vars, Decls) :-
 
 generate_var_decls_with_ids([], _, []).
 generate_var_decls_with_ids([V|Vs], N, [Decl|Decls]) :-
-    format(atom(Decl), '        term_t* var_~w = create_var(~w);\n', [V, N]),
+    format(atom(Decl), '        term_t* var_~w = create_var(state->next_var_id++);\n', [V]),
     N1 is N + 1,
     generate_var_decls_with_ids(Vs, N1, Decls).
 
 %% translate_head_unifications(+Head, +Index, -CCode)
-% Generates code to unify head arguments with actual parameters
+% Generates code to unify head arguments with actual parameters (old style with return)
 translate_head_unifications(Head, _, CCode) :-
     extract_predicate_info(Head, _, _, Args),
     translate_head_args(Args, 1, CCode).
+
+%% translate_head_unifications_with_check(+Head, +Index, -CCode)
+% Generates code to unify head arguments with conditional check instead of return
+translate_head_unifications_with_check(Head, _, CCode) :-
+    extract_predicate_info(Head, _, _, Args),
+    translate_head_args_with_check(Args, 1, [], UnifyList),
+    ( UnifyList = [] ->
+        CCode = '        if (true) {\n'
+    ;
+        atomic_list_concat(UnifyList, ' &&\n            ', UnifyCondition),
+        format(atom(CCode), '        if (~w) {\n', [UnifyCondition])
+    ).
+
+translate_head_args_with_check([], _, Acc, Acc).
+translate_head_args_with_check([Arg|Args], N, Acc, Result) :-
+    translate_head_arg_check(Arg, N, ArgCode),
+    N1 is N + 1,
+    append(Acc, [ArgCode], NewAcc),
+    translate_head_args_with_check(Args, N1, NewAcc, Result).
+
+translate_head_arg_check(Var, N, CCode) :-
+    var(Var),
+    !,
+    format(atom(CCode), 'unify(state, var_~w, arg~w)', [Var, N]).
+translate_head_arg_check(Arg, N, CCode) :-
+    term_to_c_expr(Arg, CExpr),
+    format(atom(CCode), 'unify(state, ~w, arg~w)', [CExpr, N]).
 
 translate_head_args([], _, '').
 translate_head_args([Arg|Args], N, CCode) :-
@@ -449,7 +489,7 @@ translate_args_to_params(Args, Params) :-
 %% translate_body(+Body, -CCode, +Depth)
 % Translates clause body to C code with proper control flow
 translate_body(true, '    /* true */\n', _) :- !.
-translate_body(fail, '    state->failed = true;\n    return false;\n', _) :- !.
+translate_body(fail, '    state->failed = true;\n    break;\n', _) :- !.
 translate_body(!, CCode, _) :-
     !,
     CCode = '    perform_cut(state);\n'.
@@ -513,7 +553,7 @@ translate_body(Call, CCode, _) :-
     sanitize_predicate_name(Name, SanitizedName),
     format(atom(FuncName), '~w_~w', [SanitizedName, Arity]),
     translate_call_args(Args, ArgStr),
-    format(atom(CCode), '    if (!~w(state~w)) return false;\n', [FuncName, ArgStr]).
+    format(atom(CCode), '    if (!~w(state~w)) { state->failed = true; break; }\n', [FuncName, ArgStr]).
 
 translate_call_args([], '').
 translate_call_args([Arg|Args], Result) :-
@@ -1957,6 +1997,7 @@ void init_state(prolog_state_t* state) {
     state->bindings.capacity = 0;
     state->cut_level = 0;
     state->failed = false;
+    state->next_var_id = 1000;
 }
 
 void free_state(prolog_state_t* state) {
@@ -1975,7 +2016,8 @@ int main(int argc, char** argv) {
     
     printf("Prolog-to-C compiled program\\n");
     
-    /* Call compiled predicates here */
+    /* Call main/0 predicate if it exists */
+    main_0(&state);
     
     free_state(&state);
     return 0;
