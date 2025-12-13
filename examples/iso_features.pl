@@ -58,7 +58,11 @@ test_arithmetic :-
     P is 2 ^ 3,
     format('  2 ^ 3 = ~w\n', [P]),
     M is 10 mod 3,
-    format('  10 mod 3 = ~w\n', [M]).
+    format('  10 mod 3 = ~w\n', [M]),
+    S is sign(-10),
+    format('  sign(-10) = ~w\n', [S]),
+    R is round(3),
+    format('  round(3) = ~w\n', [R]).
 
 % Test term comparison
 test_term_comparison :-
@@ -74,6 +78,14 @@ test_io :-
     write('  write works'), nl,
     tab(5), write('  tab(5) works\n').
 
+% Test sorting predicates
+test_sorting :-
+    write('\nTesting sorting predicates:\n'),
+    sort([3,1,2,1,3], S1),
+    format('  sort([3,1,2,1,3], ~w) - removes duplicates\n', [S1]),
+    msort([3,1,2,1,3], S2),
+    format('  msort([3,1,2,1,3], ~w) - keeps duplicates\n', [S2]).
+
 % Main test predicate
 main :-
     write('=== ISO Prolog Features Test ===\n\n'),
@@ -84,4 +96,5 @@ main :-
     test_arithmetic,
     test_term_comparison,
     test_io,
+    test_sorting,
     write('\n=== All Tests Completed ===\n').

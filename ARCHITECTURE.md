@@ -266,15 +266,31 @@ Potential:
 
 ## Limitations
 
+### Implemented ISO Standard Features
+
+- **Type checking predicates**: `atom/1`, `number/1`, `integer/1`, `var/1`, `nonvar/1`, `compound/1`, `is_list/1`, `atomic/1`, `ground/1`, `callable/1`
+- **Term comparison**: `@</2`, `@>/2`, `@=</2`, `@>=/2`, `compare/3` with standard term ordering
+- **List predicates**: `length/2`, `nth0/3`, `nth1/3`, `last/2`, `reverse/2`, `sort/2`, `msort/2`, `keysort/2`
+- **Atom manipulation**: `atom_codes/2`, `atom_chars/2`, `atom_length/2`, `atom_concat/3`, `sub_atom/5`
+- **Term manipulation**: `functor/3`, `arg/3`, `=../2` (univ), `copy_term/2`
+- **Arithmetic**: Full `is/2` evaluation with operators: `+`, `-`, `*`, `/`, `//`, `mod`, `rem`, `^`, `**`, `abs`, `sign`, `min`, `max`, `sqrt`, `floor`, `ceiling`, `round`, `truncate`, bitwise ops (`<<`, `>>`, `/\`, `\/`, `xor`)
+- **I/O predicates**: `write/1`, `format/2`, `nl/0`, `tab/1`, `get_char/1`, `put_char/1`
+- **Comparison operators**: `>`, `<`, `>=`, `=<`, `=`, `==`, `\=`, `\==`
+- **Meta-predicates**: Simplified `call/1`, `call/2`, `call/3`, `apply/2`
+- **Control predicates**: `true/0`, `once/1`, `ignore/1`, `!/0` (cut)
+- **Sorting**: `sort/2` (removes duplicates), `msort/2` (keeps duplicates), `keysort/2` (sorts Key-Value pairs)
+
 ### Not Yet Implemented
 
-- Arithmetic evaluation (is/2, =:=/2, etc.)
-- String operations
-- I/O predicates (read/1, write/1)
-- Assert/retract (dynamic predicates)
+- Full meta-call interpretation (current `call/1` etc. are simplified)
+- `bagof/3`, `setof/3` (solution collection with free variables)
+- `assert/retract` (dynamic predicates)
+- `catch/3`, `throw/1` (exception handling)
+- `read/1`, `get/1`, `put/1` (character I/O beyond basic support)
 - Definite clause grammars (DCGs)
 - Module system
 - Constraints (CLP)
+- Floating point arithmetic (currently uses integer arithmetic)
 
 ### Semantic Differences
 

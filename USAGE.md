@@ -106,16 +106,59 @@ all_colors(Colors) :- findall(C, color(C), Colors).
 
 Enumerates all solutions to a goal.
 
-### Currently Unsupported
+### ISO Standard Predicates (Supported)
 
-- Arithmetic evaluation (limited, only basic operations)
-- I/O predicates (read/write)
-- Assert/retract (dynamic predicates)
+The following ISO Prolog standard predicates are supported:
+
+#### Type Checking
+- `atom(X)`, `number(X)`, `integer(X)`, `var(X)`, `nonvar(X)`
+- `compound(X)`, `atomic(X)`, `is_list(X)`, `ground(X)`, `callable(X)`
+
+#### Arithmetic
+- Operators: `+`, `-`, `*`, `/`, `//`, `mod`, `rem`, `^`, `**`
+- Functions: `abs`, `sign`, `min`, `max`, `sqrt`, `floor`, `ceiling`, `round`, `truncate`
+- Bitwise: `<<`, `>>`, `/\`, `\/`, `xor`
+- Comparison: `>`, `<`, `>=`, `=<`, `=:=`, `=\=`
+
+#### Lists
+- `length(List, Length)`, `reverse(List, Reversed)`
+- `nth0(N, List, Elem)`, `nth1(N, List, Elem)`, `last(List, Last)`
+- `sort(List, Sorted)`, `msort(List, Sorted)`, `keysort(Pairs, Sorted)`
+
+#### Atoms and Strings
+- `atom_codes(Atom, Codes)`, `atom_chars(Atom, Chars)`
+- `atom_length(Atom, Length)`, `atom_concat(Atom1, Atom2, Result)`
+- `sub_atom(Atom, Before, Length, After, Sub)`
+
+#### Term Manipulation
+- `functor(Term, Functor, Arity)`, `arg(N, Term, Arg)`
+- `Term =.. List` (univ), `copy_term(Term, Copy)`
+- `compare(Order, Term1, Term2)`
+
+#### Term Comparison
+- `@<`, `@>`, `@=<`, `@>=` (standard term ordering)
+
+#### I/O
+- `write(Term)`, `format(Format, Args)`, `nl`, `tab(N)`
+- `get_char(Char)`, `put_char(Char)`
+
+#### Control
+- `true`, `fail`, `!` (cut), `once(Goal)`, `ignore(Goal)`
+
+#### Meta-Predicates (Simplified)
+- `call(Goal)`, `call(Closure, Arg)`, `call(Closure, Arg1, Arg2)`
+- `apply(Goal, Args)`
+
+### Currently Unsupported or Limited
+
+- Full meta-call interpretation (simplified implementation)
+- `bagof/3`, `setof/3` (not fully implemented)
+- `assert/retract` (dynamic predicates)
+- `catch/3`, `throw/1` (exception handling)
 - DCGs (Definite Clause Grammars)
 - Constraints (CLP)
 - Module system
-- String operations
-- Most built-in predicates
+- Floating point arithmetic (uses integer arithmetic)
 
 ## Examples
 

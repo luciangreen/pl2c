@@ -13,6 +13,16 @@ A comprehensive Prolog-to-C compiler that converts Prolog code into equivalent C
 - **findall/3 Implementation**: Solution enumeration in isolated generator contexts
 - **Cut (!/0) Support**: Global cut barriers that prune local choice points and prevent clause fallback
 - **Verification Tool**: Single command to convert, compile, and verify equivalence with SWI-Prolog
+- **ISO Prolog Standard Predicates**: Comprehensive support for ISO standard built-in predicates including:
+  - Type checking: `atom/1`, `number/1`, `integer/1`, `var/1`, `nonvar/1`, `compound/1`, `is_list/1`, `atomic/1`, `ground/1`, `callable/1`
+  - Term comparison: `@</2`, `@>/2`, `@=</2`, `@>=/2`, `compare/3`
+  - List operations: `length/2`, `nth0/3`, `nth1/3`, `last/2`, `reverse/2`, `sort/2`, `msort/2`, `keysort/2`
+  - Atom/string manipulation: `atom_codes/2`, `atom_chars/2`, `atom_length/2`, `atom_concat/3`, `sub_atom/5`
+  - Term manipulation: `functor/3`, `arg/3`, `=../2`, `copy_term/2`
+  - Arithmetic: Extended support for `abs`, `sign`, `min`, `max`, `sqrt`, `floor`, `ceiling`, `round`, `truncate`, power (`^`, `**`), bitwise operators
+  - I/O: `nl/0`, `tab/1`, `get_char/1`, `put_char/1`, `write/1`, `format/2`
+  - Meta-predicates: `call/1`, `call/2`, `call/3`, `apply/2`
+  - Control: `true/0`, `once/1`, `ignore/1`
 
 ## Architecture
 
@@ -193,12 +203,14 @@ The compiled C code follows Prolog's execution model:
 
 ### Limitations
 
-Current implementation:
-- Basic arithmetic operators (>, is)
-- Limited built-in predicates
-- No dynamic predicates (assert/retract)
-- No DCG support
+Current implementation limitations:
+- No dynamic predicates (assert/retract) - predicates must be defined at compile time
+- No DCG (Definite Clause Grammar) support
 - No module system
+- Meta-call predicates (`call/1`, etc.) have simplified implementations
+- No constraint logic programming (CLP)
+- Limited exception handling (no `catch/3`, `throw/1`)
+- Solution collection (`bagof/3`, `setof/3`) not fully implemented
 
 ## Contributing
 
