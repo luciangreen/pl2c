@@ -10,6 +10,9 @@
 :- use_module(library(lists)).
 :- use_module(library(readutil)).
 
+% Dynamic predicate to store variable-name-to-index mapping during compilation
+:- dynamic var_name_index_map/2.
+
 %% compile_prolog_to_c(+PrologFile, +CFile)
 % Main entry point: compiles a Prolog file to C
 compile_prolog_to_c(PrologFile, CFile) :-
@@ -333,20 +336,21 @@ translate_single_clause((Head :- Body), Index, CCode) :-
     !,
     % Collect all variables
     term_variables((Head, Body), AllVars),
-    % CRITICAL: Format all variables together to establish consistent naming.
-    % Prolog assigns names to variables when they're first printed. By formatting
-    % Head, Body, and AllVars together in one call, we ensure all variables get
-    % consistent names that will be reused in subsequent format calls during code generation.
-    format(atom(_), '~w,~w,~w', [Head, Body, AllVars]),
-    % Generate ALL code strings
-    generate_var_declarations(AllVars, VarDecls),
-    translate_head_unifications_with_check(Head, Index, HeadCode),
-    translate_body(Body, BodyCode, 0),
-    % Create a display copy for the comment
-    copy_term((Head, Body), (HeadDisp, BodyDisp)),
-    numbervars((HeadDisp, BodyDisp), 0, _),
-    % Final assembly
-    format(atom(CCode), 
+    % Create explicit variable-to-index mapping
+    create_var_map(AllVars),
+    % Use setup_call_cleanup to ensure mapping is always cleaned up
+    setup_call_cleanup(
+        true,
+        (
+            % Generate ALL code strings
+            generate_var_declarations(AllVars, VarDecls),
+            translate_head_unifications_with_check(Head, Index, HeadCode),
+            translate_body(Body, BodyCode, 0),
+            % Create a display copy for the comment
+            copy_term((Head, Body), (HeadDisp, BodyDisp)),
+            numbervars((HeadDisp, BodyDisp), 0, _),
+            % Final assembly
+            format(atom(CCode), 
 '    /* Clause ~w: ~w :- ~w */
     {
         int saved_bindings_size = state->bindings.size;
@@ -359,21 +363,27 @@ translate_single_clause((Head :- Body), Index, CCode) :-
         state->bindings.size = saved_bindings_size;
         state->failed = false;
     }
-', [Index, HeadDisp, BodyDisp, VarDecls, HeadCode, BodyCode]).
+', [Index, HeadDisp, BodyDisp, VarDecls, HeadCode, BodyCode])
+        ),
+        retractall(var_name_index_map(_, _))
+    ).
 
 translate_single_clause(Head, Index, CCode) :-
     % Fact (clause without body)
     % Collect all variables
     term_variables(Head, AllVars),
-    % CRITICAL: Format all variables together to establish consistent naming.
-    % See comment in clause version above for explanation.
-    format(atom(_), '~w,~w', [Head, AllVars]),
-    generate_var_declarations(AllVars, VarDecls),
-    translate_head_unifications_with_check(Head, Index, HeadCode),
-    % Create a display copy for the comment
-    copy_term(Head, HeadDisp),
-    numbervars(HeadDisp, 0, _),
-    format(atom(CCode), 
+    % Create explicit variable-to-index mapping
+    create_var_map(AllVars),
+    % Use setup_call_cleanup to ensure mapping is always cleaned up
+    setup_call_cleanup(
+        true,
+        (
+            generate_var_declarations(AllVars, VarDecls),
+            translate_head_unifications_with_check(Head, Index, HeadCode),
+            % Create a display copy for the comment
+            copy_term(Head, HeadDisp),
+            numbervars(HeadDisp, 0, _),
+            format(atom(CCode), 
 '    /* Clause ~w: ~w */
     {
         int saved_bindings_size = state->bindings.size;
@@ -384,7 +394,10 @@ translate_single_clause(Head, Index, CCode) :-
         state->bindings.size = saved_bindings_size;
         state->failed = false;
     }
-', [Index, HeadDisp, VarDecls, HeadCode]).
+', [Index, HeadDisp, VarDecls, HeadCode])
+        ),
+        retractall(var_name_index_map(_, _))
+    ).
 
 %% collect_variables(+Term, -Vars)
 % Collects all variables in a term
@@ -411,7 +424,8 @@ generate_var_declarations(Vars, Decls) :-
 
 generate_var_decls_with_ids([], _, []).
 generate_var_decls_with_ids([V|Vs], N, [Decl|Decls]) :-
-    format(atom(Decl), '        term_t* var_~w = create_var(state->next_var_id++);\n', [V]),
+    get_var_index(V, Index),
+    format(atom(Decl), '        term_t* var__~w = create_var(state->next_var_id++);\n', [Index]),
     N1 is N + 1,
     generate_var_decls_with_ids(Vs, N1, Decls).
 
@@ -467,7 +481,8 @@ translate_head_args_with_check([Arg|Args], N, Acc, Result) :-
 translate_head_arg_check(Var, N, CCode) :-
     var(Var),
     !,
-    format(atom(CCode), 'unify(state, var_~w, arg~w)', [Var, N]).
+    get_var_index(Var, Index),
+    format(atom(CCode), 'unify(state, var__~w, arg~w)', [Index, N]).
 translate_head_arg_check(Arg, N, CCode) :-
     term_to_c_expr(Arg, CExpr),
     format(atom(CCode), 'unify(state, ~w, arg~w)', [CExpr, N]).
@@ -482,7 +497,8 @@ translate_head_args([Arg|Args], N, CCode) :-
 translate_head_arg_unify(Var, N, CCode) :-
     var(Var),
     !,
-    format(atom(CCode), '        if (!unify(state, var_~w, arg~w)) return false;\n', [Var, N]).
+    get_var_index(Var, Index),
+    format(atom(CCode), '        if (!unify(state, var__~w, arg~w)) return false;\n', [Index, N]).
 translate_head_arg_unify(Arg, N, CCode) :-
     term_to_c_expr(Arg, CExpr),
     format(atom(CCode), '        if (!unify(state, ~w, arg~w)) return false;\n', [CExpr, N]).
@@ -546,7 +562,7 @@ translate_body((Cond -> Then ; Else), CCode, Depth) :-
     translate_body(Then, ThenCode, Depth),
     translate_body(Else, ElseCode, Depth),
     format(atom(CCode),
-'    /* If-then-else: ~w -> ~w ; ~w */
+'    /* If-then-else */
     {
         int saved_size = state->bindings.size;
 ~w
@@ -560,7 +576,7 @@ translate_body((Cond -> Then ; Else), CCode, Depth) :-
 ~w
         }
     }
-', [Cond, Then, Else, CondCode, ThenCode, ElseCode]).
+', [CondCode, ThenCode, ElseCode]).
 translate_body((A ; B), CCode, Depth) :-
     !,
     % Disjunction: try A, if it fails try B
@@ -584,7 +600,7 @@ translate_body(findall(Template, Goal, Result), CCode, Depth) :-
     % findall/3: enumerate all solutions
     translate_body(Goal, GoalCode, Depth),
     format(atom(CCode),
-'    /* findall(~w, ~w, ~w) */
+'    /* findall/3 */
     {
         term_t** solutions = NULL;
         int solution_count = 0;
@@ -608,7 +624,7 @@ translate_body(findall(Template, Goal, Result), CCode, Depth) :-
         /* Build result list */
         free_state(&findall_state);
     }
-', [Template, Goal, Result, GoalCode]).
+', [GoalCode]).
 translate_body(Call, CCode, _) :-
     % Regular predicate call
     extract_predicate_info(Call, Name, Arity, Args),
@@ -644,10 +660,46 @@ escape_c_string([92|Rest], [92, 92|EscapedRest]) :- % \\
 escape_c_string([C|Rest], [C|EscapedRest]) :-
     escape_c_string(Rest, EscapedRest).
 
+%% create_var_map(+Vars)
+% Creates a mapping from variables to their indices
+% Maps each variable to its position in the AllVars list
+% Uses variable names (from format) as keys to avoid identity issues
+create_var_map(Vars) :-
+    retractall(var_name_index_map(_, _)),
+    % First, format all variables together to establish their names
+    format(atom(_), '~w', [Vars]),
+    create_var_map_impl(Vars, 0).
+
+create_var_map_impl([], _).
+create_var_map_impl([V|Vs], N) :-
+    % Get the variable's printed name
+    format(atom(VarName), '~w', [V]),
+    % Store the mapping using the name as key
+    assert(var_name_index_map(VarName, N)),
+    N1 is N + 1,
+    create_var_map_impl(Vs, N1).
+
+%% get_var_index(+Var, -Index)
+% Gets the index for a variable from the mapping
+get_var_index(Var, Index) :-
+    % Get the variable's printed name
+    format(atom(VarName), '~w', [Var]),
+    % Look up the index by name
+    var_name_index_map(VarName, Index),
+    !.
+get_var_index(Var, _) :-
+    % If not found, this is an error - print debug info
+    format(atom(VarName), '~w', [Var]),
+    format(user_error, 'ERROR: Variable ~w (name: ~w) not found in mapping~n', [Var, VarName]),
+    format(user_error, 'Current mappings:~n', []),
+    forall(var_name_index_map(Name, I), format(user_error, '  ~w -> ~w~n', [Name, I])),
+    fail.
+
 term_to_c_expr(Var, Expr) :-
     var(Var),
     !,
-    format(atom(Expr), 'var_~w', [Var]).
+    get_var_index(Var, Index),
+    format(atom(Expr), 'var__~w', [Index]).
 term_to_c_expr(Atom, Expr) :-
     atom(Atom),
     !,
