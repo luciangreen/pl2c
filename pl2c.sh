@@ -49,7 +49,8 @@ echo "Converting $PROLOG_FILE to C..."
 swipl -g "use_module(pl2c), compile_prolog_to_c('$PROLOG_FILE', '${OUTPUT_NAME}.c'), halt." -t 'halt(1).' 2>/dev/null || {
     # Check if a pre-existing C file exists with the same base name as the Prolog file
     PROLOG_BASE="${PROLOG_FILE%.pl}"
-    if [ -f "${PROLOG_BASE}.c" ]; then
+    # Only use pre-compiled C file if it exists, is not empty, and is different from the output
+    if [ -f "${PROLOG_BASE}.c" ] && [ -s "${PROLOG_BASE}.c" ] && [ "${PROLOG_BASE}.c" != "${OUTPUT_NAME}.c" ]; then
         echo "Using pre-compiled C file: ${PROLOG_BASE}.c"
         cp "${PROLOG_BASE}.c" "${OUTPUT_NAME}.c"
     else
