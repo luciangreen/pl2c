@@ -27,6 +27,8 @@ main :-
     max(2, 7, M2),
     format('max(2, 7) = ~w\n', [M2]),
     safe_member(A,[2,3,4]),
-    format('safe_member(A,[2,3,4]) ~w\n', [A]),
+    format('safe_member(A,[2,3,4]) = ~w\n', [A]),
     green_cut(3,2,B),
-    format('green_cut(3,2,B) = ~w\n', [B]).
+    format('green_cut(3,2,B) = ~w\n', [B]),
+    safe_member([c,C],[[a,a],[b,b],[c,c]]),
+    format('member([c,C],[[a,a],[b,b],[c,c]]) = ~w\n', [C]).
