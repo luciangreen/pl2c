@@ -36,10 +36,12 @@ read_clauses(Stream, Clauses) :-
 % Translates a list of Prolog clauses to C code
 translate_program(Clauses, CCode) :-
     generate_c_header(Header),
-    translate_clauses(Clauses, PredicateDefs),
+    group_clauses_by_predicate(Clauses, GroupedClauses),
+    generate_predicate_declarations(GroupedClauses, Declarations),
+    translate_predicate_groups(GroupedClauses, PredicateDefs),
     generate_c_main(MainCode),
     generate_c_footer(Footer),
-    atomic_list_concat([Header, PredicateDefs, MainCode, Footer], '\n', CCode).
+    atomic_list_concat([Header, Declarations, PredicateDefs, MainCode, Footer], '\n', CCode).
 
 %% generate_c_header(-Header)
 % Generates the C header with includes and data structures
@@ -129,6 +131,9 @@ bool lt_2(prolog_state_t* state, term_t* arg1, term_t* arg2);
 bool gte_2(prolog_state_t* state, term_t* arg1, term_t* arg2);
 bool lte_2(prolog_state_t* state, term_t* arg1, term_t* arg2);
 bool eq_2(prolog_state_t* state, term_t* arg1, term_t* arg2);
+bool neq_2(prolog_state_t* state, term_t* arg1, term_t* arg2);
+bool eqeq_2(prolog_state_t* state, term_t* arg1, term_t* arg2);
+bool neqeq_2(prolog_state_t* state, term_t* arg1, term_t* arg2);
 bool is_2(prolog_state_t* state, term_t* arg1, term_t* arg2);
 
 /* Built-in I/O predicates */
@@ -136,6 +141,21 @@ void print_term(term_t* term);
 bool write_1(prolog_state_t* state, term_t* arg1);
 bool format_2(prolog_state_t* state, term_t* arg1, term_t* arg2);
 '.
+
+%% generate_predicate_declarations(+GroupedClauses, -Declarations)
+% Generate forward declarations for all predicates
+generate_predicate_declarations([], '').
+generate_predicate_declarations(Groups, Declarations) :-
+    findall(Decl, (
+        member(Name/Arity-Clauses, Groups),
+        Clauses = [FirstClause|_],
+        clause_head(FirstClause, Head),
+        extract_predicate_info(Head, _, _, Args),
+        translate_args_to_params(Args, Params),
+        sanitize_predicate_name(Name, SanitizedName),
+        format(atom(Decl), 'bool ~w_~w(prolog_state_t* state~w);', [SanitizedName, Arity, Params])
+    ), DeclList),
+    atomic_list_concat(DeclList, '\n', Declarations).
 
 %% translate_clauses(+Clauses, -CCode)
 % Translates each clause to C function code
@@ -685,6 +705,32 @@ bool lte_2(prolog_state_t* state, term_t* arg1, term_t* arg2) {
 
 bool eq_2(prolog_state_t* state, term_t* arg1, term_t* arg2) {
     return unify(state, arg1, arg2);
+}
+
+bool neq_2(prolog_state_t* state, term_t* arg1, term_t* arg2) {
+    return !unify(state, arg1, arg2);
+}
+
+bool eqeq_2(prolog_state_t* state, term_t* arg1, term_t* arg2) {
+    /* Structural equality (==) - no unification */
+    term_t* t1 = deref(state, arg1);
+    term_t* t2 = deref(state, arg2);
+    
+    if (t1->type != t2->type) return false;
+    
+    if (t1->type == TERM_INT) {
+        return t1->data.int_val == t2->data.int_val;
+    } else if (t1->type == TERM_ATOM) {
+        return strcmp(t1->data.atom, t2->data.atom) == 0;
+    } else if (t1->type == TERM_VAR) {
+        return t1->data.var_id == t2->data.var_id;
+    }
+    /* For compound terms and lists, would need recursive comparison */
+    return false;
+}
+
+bool neqeq_2(prolog_state_t* state, term_t* arg1, term_t* arg2) {
+    return !eqeq_2(state, arg1, arg2);
 }
 
 /* Arithmetic evaluation for is/2 */
