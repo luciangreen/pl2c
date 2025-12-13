@@ -316,6 +316,11 @@ translate_nondeterministic_predicate(Clauses, FuncName, Params, CCode) :-
     if (state->choice_stack && state->choice_stack->predicate_id == (int)(intptr_t)&~w) {
         start_clause = state->choice_stack->clause_index;
         pop_choice_point(state);
+        /* Check for sentinel - all clauses exhausted */
+        if (start_clause >= 9999) {
+            state->failed = true;
+            return false;
+        }
     }
     
 ~w
@@ -346,21 +351,29 @@ translate_single_clause_with_choicepoint((Head :- Body), FuncName, Index, IsLast
             copy_term((Head, Body), (HeadDisp, BodyDisp)),
             numbervars((HeadDisp, BodyDisp), 0, _),
             ( IsLast ->
-                % Last clause - no choice point needed
+                % Last clause - push sentinel choice point to mark exhaustion
                 format(atom(CCode), 
 '    /* Clause ~w: ~w :- ~w */
     if (start_clause <= ~w) {
         int saved_bindings_size = state->bindings.size;
+        /* Push sentinel choice point BEFORE trying clause */
+        push_choice_point(state, (int)(intptr_t)&~w, 9999);
 ~w~w
             do {
 ~w            } while (0);
-            if (!state->failed) return true;
+            if (!state->failed) {
+                return true;
+            }
         }
         /* Restore bindings for next clause */
         state->bindings.size = saved_bindings_size;
         state->failed = false;
+        /* Remove the choice point we pushed if clause failed */
+        if (state->choice_stack && state->choice_stack->predicate_id == (int)(intptr_t)&~w) {
+            pop_choice_point(state);
+        }
     }
-', [Index, HeadDisp, BodyDisp, Index, VarDecls, HeadCode, BodyCode])
+', [Index, HeadDisp, BodyDisp, Index, FuncName, VarDecls, HeadCode, BodyCode, FuncName])
             ;
                 % Not last clause - push choice point
                 NextIndex is Index + 1,
@@ -368,9 +381,9 @@ translate_single_clause_with_choicepoint((Head :- Body), FuncName, Index, IsLast
 '    /* Clause ~w: ~w :- ~w */
     if (start_clause <= ~w) {
         int saved_bindings_size = state->bindings.size;
+        /* Push choice point BEFORE trying clause */
+        push_choice_point(state, (int)(intptr_t)&~w, ~w);
 ~w~w
-            /* Push choice point for next clause */
-            push_choice_point(state, (int)(intptr_t)&~w, ~w);
             do {
 ~w            } while (0);
             if (!state->failed) return true;
@@ -378,8 +391,12 @@ translate_single_clause_with_choicepoint((Head :- Body), FuncName, Index, IsLast
         /* Restore bindings for next clause */
         state->bindings.size = saved_bindings_size;
         state->failed = false;
+        /* Remove the choice point we pushed if clause failed */
+        if (state->choice_stack && state->choice_stack->predicate_id == (int)(intptr_t)&~w) {
+            pop_choice_point(state);
+        }
     }
-', [Index, HeadDisp, BodyDisp, Index, VarDecls, HeadCode, FuncName, NextIndex, BodyCode])
+', [Index, HeadDisp, BodyDisp, Index, FuncName, NextIndex, VarDecls, HeadCode, BodyCode, FuncName])
             )
         ),
         retractall(var_name_index_map(_, _))
@@ -397,19 +414,25 @@ translate_single_clause_with_choicepoint(Head, FuncName, Index, IsLast, CCode) :
             copy_term(Head, HeadDisp),
             numbervars(HeadDisp, 0, _),
             ( IsLast ->
-                % Last clause - no choice point needed
+                % Last clause - push sentinel choice point to mark exhaustion
                 format(atom(CCode), 
 '    /* Clause ~w: ~w */
     if (start_clause <= ~w) {
         int saved_bindings_size = state->bindings.size;
+        /* Push sentinel choice point BEFORE trying clause */
+        push_choice_point(state, (int)(intptr_t)&~w, 9999);
 ~w~w
             return true;
         }
         /* Restore bindings for next clause */
         state->bindings.size = saved_bindings_size;
         state->failed = false;
+        /* Remove the choice point we pushed if clause failed */
+        if (state->choice_stack && state->choice_stack->predicate_id == (int)(intptr_t)&~w) {
+            pop_choice_point(state);
+        }
     }
-', [Index, HeadDisp, Index, VarDecls, HeadCode])
+', [Index, HeadDisp, Index, FuncName, VarDecls, HeadCode, FuncName])
             ;
                 % Not last clause - push choice point
                 NextIndex is Index + 1,
@@ -417,16 +440,20 @@ translate_single_clause_with_choicepoint(Head, FuncName, Index, IsLast, CCode) :
 '    /* Clause ~w: ~w */
     if (start_clause <= ~w) {
         int saved_bindings_size = state->bindings.size;
+        /* Push choice point BEFORE trying clause */
+        push_choice_point(state, (int)(intptr_t)&~w, ~w);
 ~w~w
-            /* Push choice point for next clause */
-            push_choice_point(state, (int)(intptr_t)&~w, ~w);
             return true;
         }
         /* Restore bindings for next clause */
         state->bindings.size = saved_bindings_size;
         state->failed = false;
+        /* Remove the choice point we pushed if clause failed */
+        if (state->choice_stack && state->choice_stack->predicate_id == (int)(intptr_t)&~w) {
+            pop_choice_point(state);
+        }
     }
-', [Index, HeadDisp, Index, VarDecls, HeadCode, FuncName, NextIndex])
+', [Index, HeadDisp, Index, FuncName, NextIndex, VarDecls, HeadCode, FuncName])
             )
         ),
         retractall(var_name_index_map(_, _))
@@ -779,6 +806,16 @@ translate_body(findall(Template, Goal, Result), CCode, Depth) :-
         
         /* Save initial bindings for backtracking */
         int initial_bindings_size = findall_state.bindings.size;
+        bindings_t initial_bindings;
+        initial_bindings.size = findall_state.bindings.size;
+        initial_bindings.capacity = findall_state.bindings.capacity;
+        if (initial_bindings.size > 0) {
+            initial_bindings.bindings = malloc(sizeof(binding_t) * initial_bindings.capacity);
+            memcpy(initial_bindings.bindings, findall_state.bindings.bindings,
+                   sizeof(binding_t) * initial_bindings.size);
+        } else {
+            initial_bindings.bindings = NULL;
+        }
         
         /* Enumerate solutions by calling goal and backtracking */
         while (true) {
@@ -794,11 +831,29 @@ translate_body(findall(Template, Goal, Result), CCode, Depth) :-
             int var_offset = 0;
             solutions[solution_count - 1] = copy_term_helper(&findall_state, ~w, &var_offset);
             
-            /* Force backtracking to find next solution */
-            /* Pop choice point and restore bindings, then continue */
-            if (!pop_choice_point(&findall_state)) break;
-            findall_state.bindings.size = initial_bindings_size;
+            /* Check if there are more solutions */
+            /* If no choice point exists, we\'re done */
+            if (!findall_state.choice_stack) break;
+            
+            /* Restore bindings to initial state for next iteration */
+            if (findall_state.bindings.bindings) {
+                free(findall_state.bindings.bindings);
+            }
+            findall_state.bindings.size = initial_bindings.size;
+            findall_state.bindings.capacity = initial_bindings.capacity;
+            if (initial_bindings.size > 0) {
+                findall_state.bindings.bindings = malloc(sizeof(binding_t) * initial_bindings.capacity);
+                memcpy(findall_state.bindings.bindings, initial_bindings.bindings,
+                       sizeof(binding_t) * initial_bindings.size);
+            } else {
+                findall_state.bindings.bindings = NULL;
+            }
             findall_state.failed = false;
+        }
+        
+        /* Clean up initial bindings copy */
+        if (initial_bindings.bindings) {
+            free(initial_bindings.bindings);
         }
         
         /* Build result list from solutions */
