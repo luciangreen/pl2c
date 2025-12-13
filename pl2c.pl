@@ -331,11 +331,21 @@ translate_predicate_clauses([Clause|Rest], Index, CCode) :-
 %% translate_single_clause(+Clause, +Index, -CCode)
 translate_single_clause((Head :- Body), Index, CCode) :-
     !,
-    % Use term_variables to get unique variables directly
-    term_variables((Head, Body), UniqueVars),
-    generate_var_declarations(UniqueVars, VarDecls),
+    % Collect all variables
+    term_variables((Head, Body), AllVars),
+    % CRITICAL: Format all variables together to establish consistent naming.
+    % Prolog assigns names to variables when they're first printed. By formatting
+    % Head, Body, and AllVars together in one call, we ensure all variables get
+    % consistent names that will be reused in subsequent format calls during code generation.
+    format(atom(_), '~w,~w,~w', [Head, Body, AllVars]),
+    % Generate ALL code strings
+    generate_var_declarations(AllVars, VarDecls),
     translate_head_unifications_with_check(Head, Index, HeadCode),
     translate_body(Body, BodyCode, 0),
+    % Create a display copy for the comment
+    copy_term((Head, Body), (HeadDisp, BodyDisp)),
+    numbervars((HeadDisp, BodyDisp), 0, _),
+    % Final assembly
     format(atom(CCode), 
 '    /* Clause ~w: ~w :- ~w */
     {
@@ -349,14 +359,20 @@ translate_single_clause((Head :- Body), Index, CCode) :-
         state->bindings.size = saved_bindings_size;
         state->failed = false;
     }
-', [Index, Head, Body, VarDecls, HeadCode, BodyCode]).
+', [Index, HeadDisp, BodyDisp, VarDecls, HeadCode, BodyCode]).
 
 translate_single_clause(Head, Index, CCode) :-
     % Fact (clause without body)
-    % Use term_variables to get unique variables directly
-    term_variables(Head, UniqueVars),
-    generate_var_declarations(UniqueVars, VarDecls),
+    % Collect all variables
+    term_variables(Head, AllVars),
+    % CRITICAL: Format all variables together to establish consistent naming.
+    % See comment in clause version above for explanation.
+    format(atom(_), '~w,~w', [Head, AllVars]),
+    generate_var_declarations(AllVars, VarDecls),
     translate_head_unifications_with_check(Head, Index, HeadCode),
+    % Create a display copy for the comment
+    copy_term(Head, HeadDisp),
+    numbervars(HeadDisp, 0, _),
     format(atom(CCode), 
 '    /* Clause ~w: ~w */
     {
@@ -368,7 +384,7 @@ translate_single_clause(Head, Index, CCode) :-
         state->bindings.size = saved_bindings_size;
         state->failed = false;
     }
-', [Index, Head, VarDecls, HeadCode]).
+', [Index, HeadDisp, VarDecls, HeadCode]).
 
 %% collect_variables(+Term, -Vars)
 % Collects all variables in a term
@@ -398,6 +414,30 @@ generate_var_decls_with_ids([V|Vs], N, [Decl|Decls]) :-
     format(atom(Decl), '        term_t* var_~w = create_var(state->next_var_id++);\n', [V]),
     N1 is N + 1,
     generate_var_decls_with_ids(Vs, N1, Decls).
+
+%% generate_var_declarations_numbered_impl(+Count, +Prefix, -Decls)
+% Generates declarations for variables with the given prefix
+% e.g., Prefix='var__' generates var__0, var__1, ..., var__{Count-1}
+generate_var_declarations_numbered_impl(Count, Prefix, Decls) :-
+    Count > 0,
+    !,
+    C1 is Count - 1,
+    findall(Decl, 
+        (between(0, C1, N),
+         format(atom(Decl), '        term_t* ~w~w = create_var(state->next_var_id++);\n', [Prefix, N])),
+        DeclList),
+    atomic_list_concat(DeclList, '', Decls).
+generate_var_declarations_numbered_impl(_, _, '').
+
+%% generate_var_declarations_numbered(+Count, -Decls)
+% Generates declarations for var__VAR_0, var__VAR_1, ... var__VAR_{Count-1}
+generate_var_declarations_numbered(Count, Decls) :-
+    generate_var_declarations_numbered_impl(Count, 'var__VAR_', Decls).
+
+%% generate_var_declarations_with_count(+Count, -Decls)
+% Generates declarations for var__0, var__1, ... var___{Count-1}
+generate_var_declarations_with_count(Count, Decls) :-
+    generate_var_declarations_numbered_impl(Count, 'var__', Decls).
 
 %% translate_head_unifications(+Head, +Index, -CCode)
 % Generates code to unify head arguments with actual parameters (old style with return)
