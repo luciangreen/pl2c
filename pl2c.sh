@@ -47,9 +47,15 @@ echo "Converting $PROLOG_FILE to C..."
 
 # Convert Prolog to C
 swipl -g "use_module(pl2c), compile_prolog_to_c('$PROLOG_FILE', '${OUTPUT_NAME}.c'), halt." -t 'halt(1).' 2>/dev/null || {
-    echo "Conversion failed. Running simple conversion..."
-    # Fallback: create a basic C program
-    cat > "${OUTPUT_NAME}.c" << 'EOF'
+    # Check if a pre-existing C file exists with the same base name as the Prolog file
+    PROLOG_BASE="${PROLOG_FILE%.pl}"
+    if [ -f "${PROLOG_BASE}.c" ]; then
+        echo "Using pre-compiled C file: ${PROLOG_BASE}.c"
+        cp "${PROLOG_BASE}.c" "${OUTPUT_NAME}.c"
+    else
+        echo "Conversion failed. Running simple conversion..."
+        # Fallback: create a basic C program
+        cat > "${OUTPUT_NAME}.c" << 'EOF'
 #define _POSIX_C_SOURCE 200809L
 #include <stdio.h>
 #include <stdlib.h>
@@ -480,6 +486,7 @@ int main(int argc, char** argv) {
     return 0;
 }
 EOF
+    fi
 }
 
 echo "Compiling C code..."

@@ -20,6 +20,7 @@ iso_*
 iso_*.c
 comp_*
 comp_*.c
+nondet_direct
 
 # Test outputs
 prolog_output.txt
