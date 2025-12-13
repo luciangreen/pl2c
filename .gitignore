@@ -14,6 +14,8 @@ output_name
 output_name.c
 comprehensive_output
 comprehensive_output.c
+test_simple
+test_simple.c
 
 # Test outputs
 prolog_output.txt

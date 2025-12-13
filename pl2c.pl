@@ -1555,33 +1555,39 @@ bool univ_2(prolog_state_t* state, term_t* term, term_t* list) {
     return false;
 }
 
-bool copy_term_2(prolog_state_t* state, term_t* term, term_t* copy) {
+/* Helper function to recursively copy a term */
+term_t* copy_term_helper(prolog_state_t* state, term_t* term, int* var_offset) {
     term_t* t = deref(state, term);
     
-    /* Simple shallow copy for now */
     if (t->type == TERM_VAR) {
-        return unify(state, copy, create_var(t->data.var_id + 10000));
+        /* Create new variable with offset ID */
+        return create_var(t->data.var_id + *var_offset);
     } else if (t->type == TERM_ATOM) {
-        return unify(state, copy, create_atom(t->data.atom));
+        return create_atom(t->data.atom);
     } else if (t->type == TERM_INT) {
-        return unify(state, copy, create_int(t->data.int_val));
+        return create_int(t->data.int_val);
     } else if (t->type == TERM_NIL) {
-        return unify(state, copy, create_nil());
+        return create_nil();
     } else if (t->type == TERM_LIST) {
-        term_t* new_tail;
-        copy_term_2(state, t->data.list.tail, &new_tail);
-        term_t* new_head;
-        copy_term_2(state, t->data.list.head, &new_head);
-        return unify(state, copy, create_list(new_head, new_tail));
+        term_t* new_head = copy_term_helper(state, t->data.list.head, var_offset);
+        term_t* new_tail = copy_term_helper(state, t->data.list.tail, var_offset);
+        return create_list(new_head, new_tail);
     } else if (t->type == TERM_COMPOUND) {
         term_t** new_args = malloc(sizeof(term_t*) * t->data.compound.arity);
         for (int i = 0; i < t->data.compound.arity; i++) {
-            copy_term_2(state, t->data.compound.args[i], &new_args[i]);
+            new_args[i] = copy_term_helper(state, t->data.compound.args[i], var_offset);
         }
-        return unify(state, copy, create_compound(t->data.compound.functor, t->data.compound.arity, new_args));
+        return create_compound(t->data.compound.functor, t->data.compound.arity, new_args);
     }
     
-    return false;
+    return create_var(0); /* fallback */
+}
+
+bool copy_term_2(prolog_state_t* state, term_t* term, term_t* copy) {
+    /* Use a large offset to avoid variable ID collisions */
+    int var_offset = 100000;
+    term_t* copied = copy_term_helper(state, term, &var_offset);
+    return unify(state, copy, copied);
 }
 
 /* Control predicates (ISO) */
@@ -1591,12 +1597,24 @@ bool true_0(prolog_state_t* state) {
 
 bool once_1(prolog_state_t* state, term_t* goal) {
     /* Execute goal once, removing choice points on success */
-    /* This is a simplified implementation */
+    /* SIMPLIFIED IMPLEMENTATION: Does not actually execute the goal or manage choice points. */
+    /* Full implementation would require:
+     * 1. Execute the goal using call_1
+     * 2. On success, remove all choice points created during goal execution
+     * 3. Prevent backtracking into the goal
+     * For now, this is a placeholder that succeeds without executing the goal. */
+    (void)goal; /* Suppress unused parameter warning */
     return true;
 }
 
 bool ignore_1(prolog_state_t* state, term_t* goal) {
     /* Always succeeds, ignoring goal failure */
+    /* SIMPLIFIED IMPLEMENTATION: Does not actually execute the goal. */
+    /* Full implementation would:
+     * 1. Execute the goal using call_1
+     * 2. Always return true regardless of goal success/failure
+     * For now, this is a placeholder that succeeds without executing the goal. */
+    (void)goal; /* Suppress unused parameter warning */
     return true;
 }
 
@@ -1620,6 +1638,17 @@ int compare_terms_for_sort(const void* a, const void* b) {
     term_t* t1 = *(term_t**)a;
     term_t* t2 = *(term_t**)b;
     return term_compare(t1, t2);
+}
+
+int compare_keys_for_keysort(const void* a, const void* b) {
+    term_t* t1 = *(term_t**)a;
+    term_t* t2 = *(term_t**)b;
+    /* Both should be compound terms with functor "-" and arity 2 */
+    /* Compare only the first argument (the key) */
+    if (t1->type == TERM_COMPOUND && t2->type == TERM_COMPOUND) {
+        return term_compare(t1->data.compound.args[0], t2->data.compound.args[0]);
+    }
+    return 0;
 }
 
 bool sort_2(prolog_state_t* state, term_t* list, term_t* sorted) {
@@ -1745,7 +1774,7 @@ bool keysort_2(prolog_state_t* state, term_t* list, term_t* sorted) {
     }
     
     /* Sort array by keys only */
-    qsort(elements, count, sizeof(term_t*), compare_terms_for_sort);
+    qsort(elements, count, sizeof(term_t*), compare_keys_for_keysort);
     
     /* Build result list */
     term_t* result = create_nil();
