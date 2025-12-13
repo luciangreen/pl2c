@@ -23,6 +23,12 @@ safe_member(X, [_|T]) :- safe_member(X, T).
 not_member(_, []).
 not_member(X, [H|T]) :- X \= H, not_member(X, T).
 
+% Red cut example - cuts choice points
+%red_cut(X) :-
+%    likes(X, wine),
+%    !,
+%    likes(X, mary).
+
 % Green cut example - doesn't change semantics
 green_cut(X, Y, Z) :-
     X >= Y,
@@ -40,6 +46,8 @@ main :-
     format('max(2, 7) = ~w\n', [M2]),
     safe_member(A,[2,3,4]),
     format('safe_member(A,[2,3,4]) = ~w\n', [A]),
+    not_member(1,[2,3]),
+    format('not_member(1,[2,3])\n', []),
     green_cut(3,2,B),
     format('green_cut(3,2,B) = ~w\n', [B]),
     safe_member([c,C],[[a,a],[b,b],[c,c]]),
