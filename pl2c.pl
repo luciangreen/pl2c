@@ -838,13 +838,13 @@ bool format_2(prolog_state_t* state, term_t* arg1, term_t* arg2) {
     const char* fmt = format_str->data.atom;
     term_t* current_arg = args_list;
     
-    for (int i = 0; fmt[i] != \'\\0\'; i++) {
-        if (fmt[i] == \'~\' && fmt[i+1] == \'w\') {
+    for (int i = 0; fmt[i] != 0; i++) {
+        if (fmt[i] == 126 && fmt[i+1] == 119) {  /* ~w */
             if (current_arg->type == TERM_LIST) {
                 print_term(current_arg->data.list.head);
                 current_arg = current_arg->data.list.tail;
             }
-            i++; /* Skip the \'w\' */
+            i++;  /* Skip the w */
         } else {
             putchar(fmt[i]);
         }
