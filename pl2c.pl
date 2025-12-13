@@ -121,15 +121,200 @@ bool pop_choice_point(prolog_state_t* state);
 void init_state(prolog_state_t* state);
 void free_state(prolog_state_t* state);
 void perform_cut(prolog_state_t* state);
+int eval_arithmetic(prolog_state_t* state, term_t* expr);
+
+/* Built-in operators */
+bool gt_2(prolog_state_t* state, term_t* arg1, term_t* arg2);
+bool lt_2(prolog_state_t* state, term_t* arg1, term_t* arg2);
+bool gte_2(prolog_state_t* state, term_t* arg1, term_t* arg2);
+bool lte_2(prolog_state_t* state, term_t* arg1, term_t* arg2);
+bool eq_2(prolog_state_t* state, term_t* arg1, term_t* arg2);
+bool is_2(prolog_state_t* state, term_t* arg1, term_t* arg2);
+
+/* Built-in I/O predicates */
+void print_term(term_t* term);
+bool write_1(prolog_state_t* state, term_t* arg1);
+bool format_2(prolog_state_t* state, term_t* arg1, term_t* arg2);
 '.
 
 %% translate_clauses(+Clauses, -CCode)
 % Translates each clause to C function code
 translate_clauses([], '').
-translate_clauses([Clause|Rest], CCode) :-
-    translate_clause(Clause, CClause),
-    translate_clauses(Rest, CRest),
-    atomic_list_concat([CClause, CRest], '\n', CCode).
+translate_clauses(Clauses, CCode) :-
+    Clauses \= [],
+    group_clauses_by_predicate(Clauses, GroupedClauses),
+    translate_predicate_groups(GroupedClauses, CCode).
+
+%% group_clauses_by_predicate(+Clauses, -GroupedClauses)
+% Groups clauses by their predicate name/arity
+group_clauses_by_predicate([], []).
+group_clauses_by_predicate(Clauses, Grouped) :-
+    Clauses \= [],
+    collect_predicate_signatures(Clauses, Signatures),
+    group_by_signature(Signatures, Clauses, Grouped).
+
+collect_predicate_signatures([], []).
+collect_predicate_signatures([Clause|Rest], [Sig|Sigs]) :-
+    clause_signature(Clause, Sig),
+    collect_predicate_signatures(Rest, Sigs).
+
+clause_signature((Head :- _), Name/Arity) :-
+    !,
+    extract_predicate_info(Head, Name, Arity, _).
+clause_signature(Head, Name/Arity) :-
+    extract_predicate_info(Head, Name, Arity, _).
+
+group_by_signature([], [], []).
+group_by_signature(Sigs, Clauses, [Group|RestGroups]) :-
+    Sigs \= [],
+    Sigs = [FirstSig|_],
+    collect_matching_clauses(FirstSig, Sigs, Clauses, MatchingClauses, RemainingClauses, RemainingSigs),
+    Group = FirstSig-MatchingClauses,
+    group_by_signature(RemainingSigs, RemainingClauses, RestGroups).
+
+collect_matching_clauses(_, [], [], [], [], []).
+collect_matching_clauses(TargetSig, [Sig|Sigs], [Clause|Clauses], [Clause|Matching], Remaining, RemainingSigs) :-
+    Sig = TargetSig,
+    !,
+    collect_matching_clauses(TargetSig, Sigs, Clauses, Matching, Remaining, RemainingSigs).
+collect_matching_clauses(TargetSig, [Sig|Sigs], [Clause|Clauses], Matching, [Clause|Remaining], [Sig|RemainingSigs]) :-
+    collect_matching_clauses(TargetSig, Sigs, Clauses, Matching, Remaining, RemainingSigs).
+
+%% translate_predicate_groups(+Groups, -CCode)
+translate_predicate_groups([], '').
+translate_predicate_groups([Group|Rest], CCode) :-
+    translate_predicate_group(Group, GroupCode),
+    translate_predicate_groups(Rest, RestCode),
+    atomic_list_concat([GroupCode, RestCode], '\n', CCode).
+
+%% translate_predicate_group(+Group, -CCode)
+% Translates all clauses for a single predicate into one C function
+translate_predicate_group(Name/Arity-Clauses, CCode) :-
+    % Get parameters from first clause
+    Clauses = [FirstClause|_],
+    clause_head(FirstClause, Head),
+    extract_predicate_info(Head, _, _, Args),
+    translate_args_to_params(Args, Params),
+    sanitize_predicate_name(Name, SanitizedName),
+    format(atom(FuncName), '~w_~w', [SanitizedName, Arity]),
+    translate_predicate_clauses(Clauses, 1, ClausesCode),
+    format(atom(CCode), 
+'bool ~w(prolog_state_t* state~w) {
+~w
+    return false; /* No clause matched */
+}', [FuncName, Params, ClausesCode]).
+
+clause_head((Head :- _), Head) :- !.
+clause_head(Head, Head).
+
+%% sanitize_predicate_name(+Name, -SanitizedName)
+% Converts Prolog operators to valid C identifiers
+sanitize_predicate_name('>', 'gt') :- !.
+sanitize_predicate_name('<', 'lt') :- !.
+sanitize_predicate_name('>=', 'gte') :- !.
+sanitize_predicate_name('=<', 'lte') :- !.
+sanitize_predicate_name('=', 'eq') :- !.
+sanitize_predicate_name('==', 'eqeq') :- !.
+sanitize_predicate_name('\\=', 'neq') :- !.
+sanitize_predicate_name('\\==', 'neqeq') :- !.
+sanitize_predicate_name('is', 'is') :- !.
+sanitize_predicate_name('+', 'plus') :- !.
+sanitize_predicate_name('-', 'minus') :- !.
+sanitize_predicate_name('*', 'times') :- !.
+sanitize_predicate_name('/', 'div') :- !.
+sanitize_predicate_name('//', 'intdiv') :- !.
+sanitize_predicate_name('mod', 'mod') :- !.
+sanitize_predicate_name(Name, Name).
+
+%% translate_predicate_clauses(+Clauses, +Index, -CCode)
+translate_predicate_clauses([], _, '').
+translate_predicate_clauses([Clause|Rest], Index, CCode) :-
+    translate_single_clause(Clause, Index, ClauseCode),
+    NextIndex is Index + 1,
+    translate_predicate_clauses(Rest, NextIndex, RestCode),
+    atomic_list_concat([ClauseCode, RestCode], '', CCode).
+
+%% translate_single_clause(+Clause, +Index, -CCode)
+translate_single_clause((Head :- Body), Index, CCode) :-
+    !,
+    collect_variables(Head, HeadVars),
+    collect_variables(Body, BodyVars),
+    append(HeadVars, BodyVars, AllVars),
+    sort(AllVars, UniqueVars),
+    generate_var_declarations(UniqueVars, VarDecls),
+    translate_head_unifications(Head, Index, HeadCode),
+    translate_body(Body, BodyCode, 0),
+    format(atom(CCode), 
+'    /* Clause ~w: ~w :- ~w */
+    {
+~w~w~w
+        return true;
+    }
+', [Index, Head, Body, VarDecls, HeadCode, BodyCode]).
+
+translate_single_clause(Head, Index, CCode) :-
+    % Fact (clause without body)
+    collect_variables(Head, HeadVars),
+    sort(HeadVars, UniqueVars),
+    generate_var_declarations(UniqueVars, VarDecls),
+    translate_head_unifications(Head, Index, HeadCode),
+    format(atom(CCode), 
+'    /* Clause ~w: ~w */
+    {
+~w~w
+        return true;
+    }
+', [Index, Head, VarDecls, HeadCode]).
+
+%% collect_variables(+Term, -Vars)
+% Collects all variables in a term
+collect_variables(Var, [Var]) :- var(Var), !.
+collect_variables(Term, Vars) :-
+    compound(Term),
+    !,
+    Term =.. [_|Args],
+    collect_variables_list(Args, Vars).
+collect_variables(_, []).
+
+collect_variables_list([], []).
+collect_variables_list([H|T], Vars) :-
+    collect_variables(H, HVars),
+    collect_variables_list(T, TVars),
+    append(HVars, TVars, Vars).
+
+%% generate_var_declarations(+Vars, -Decls)
+generate_var_declarations([], '').
+generate_var_declarations(Vars, Decls) :-
+    Vars \= [],
+    generate_var_decls_with_ids(Vars, 0, DeclList),
+    atomic_list_concat(DeclList, '', Decls).
+
+generate_var_decls_with_ids([], _, []).
+generate_var_decls_with_ids([V|Vs], N, [Decl|Decls]) :-
+    format(atom(Decl), '        term_t* var_~w = create_var(~w);\n', [V, N]),
+    N1 is N + 1,
+    generate_var_decls_with_ids(Vs, N1, Decls).
+
+%% translate_head_unifications(+Head, +Index, -CCode)
+% Generates code to unify head arguments with actual parameters
+translate_head_unifications(Head, _, CCode) :-
+    extract_predicate_info(Head, _, _, Args),
+    translate_head_args(Args, 1, CCode).
+
+translate_head_args([], _, '').
+translate_head_args([Arg|Args], N, CCode) :-
+    translate_head_arg_unify(Arg, N, ArgCode),
+    N1 is N + 1,
+    translate_head_args(Args, N1, RestCode),
+    atomic_list_concat([ArgCode, RestCode], '', CCode).
+
+translate_head_arg_unify(Var, N, CCode) :-
+    var(Var),
+    !,
+    format(atom(CCode), '        if (!unify(state, var_~w, arg~w)) return false;\n', [Var, N]).
+translate_head_arg_unify(Arg, N, CCode) :-
+    term_to_c_expr(Arg, CExpr),
+    format(atom(CCode), '        if (!unify(state, ~w, arg~w)) return false;\n', [CExpr, N]).
 
 %% translate_clause(+Clause, -CCode)
 % Translates a single clause to C code
@@ -234,7 +419,8 @@ translate_body(findall(Template, Goal, Result), CCode, Depth) :-
 translate_body(Call, CCode, _) :-
     % Regular predicate call
     extract_predicate_info(Call, Name, Arity, Args),
-    format(atom(FuncName), '~w_~w', [Name, Arity]),
+    sanitize_predicate_name(Name, SanitizedName),
+    format(atom(FuncName), '~w_~w', [SanitizedName, Arity]),
     translate_call_args(Args, ArgStr),
     format(atom(CCode), '    if (!~w(state~w)) return false;\n', [FuncName, ArgStr]).
 
@@ -244,6 +430,27 @@ translate_call_args([Arg|Args], Result) :-
     translate_call_args(Args, Rest),
     format(atom(Result), ', ~w~w', [CExpr, Rest]).
 
+%% escape_c_string(+InputCodes, -OutputCodes)
+% Escapes special characters for C string literals
+escape_c_string([], []).
+escape_c_string([10|Rest], [92, 110|EscapedRest]) :- % \n
+    !,
+    escape_c_string(Rest, EscapedRest).
+escape_c_string([13|Rest], [92, 114|EscapedRest]) :- % \r
+    !,
+    escape_c_string(Rest, EscapedRest).
+escape_c_string([9|Rest], [92, 116|EscapedRest]) :- % \t
+    !,
+    escape_c_string(Rest, EscapedRest).
+escape_c_string([34|Rest], [92, 34|EscapedRest]) :- % \"
+    !,
+    escape_c_string(Rest, EscapedRest).
+escape_c_string([92|Rest], [92, 92|EscapedRest]) :- % \\
+    !,
+    escape_c_string(Rest, EscapedRest).
+escape_c_string([C|Rest], [C|EscapedRest]) :-
+    escape_c_string(Rest, EscapedRest).
+
 term_to_c_expr(Var, Expr) :-
     var(Var),
     !,
@@ -251,7 +458,10 @@ term_to_c_expr(Var, Expr) :-
 term_to_c_expr(Atom, Expr) :-
     atom(Atom),
     !,
-    format(atom(Expr), 'create_atom("~w")', [Atom]).
+    atom_codes(Atom, Codes),
+    escape_c_string(Codes, EscapedCodes),
+    atom_codes(EscapedAtom, EscapedCodes),
+    format(atom(Expr), 'create_atom("~w")', [EscapedAtom]).
 term_to_c_expr(Int, Expr) :-
     integer(Int),
     !,
@@ -430,6 +640,171 @@ void perform_cut(prolog_state_t* state) {
         free(cp->saved_bindings.bindings);
         free(cp);
     }
+}
+
+/* Built-in arithmetic and comparison operators */
+bool gt_2(prolog_state_t* state, term_t* arg1, term_t* arg2) {
+    term_t* t1 = deref(state, arg1);
+    term_t* t2 = deref(state, arg2);
+    if (t1->type == TERM_INT && t2->type == TERM_INT) {
+        return t1->data.int_val > t2->data.int_val;
+    }
+    state->failed = true;
+    return false;
+}
+
+bool lt_2(prolog_state_t* state, term_t* arg1, term_t* arg2) {
+    term_t* t1 = deref(state, arg1);
+    term_t* t2 = deref(state, arg2);
+    if (t1->type == TERM_INT && t2->type == TERM_INT) {
+        return t1->data.int_val < t2->data.int_val;
+    }
+    state->failed = true;
+    return false;
+}
+
+bool gte_2(prolog_state_t* state, term_t* arg1, term_t* arg2) {
+    term_t* t1 = deref(state, arg1);
+    term_t* t2 = deref(state, arg2);
+    if (t1->type == TERM_INT && t2->type == TERM_INT) {
+        return t1->data.int_val >= t2->data.int_val;
+    }
+    state->failed = true;
+    return false;
+}
+
+bool lte_2(prolog_state_t* state, term_t* arg1, term_t* arg2) {
+    term_t* t1 = deref(state, arg1);
+    term_t* t2 = deref(state, arg2);
+    if (t1->type == TERM_INT && t2->type == TERM_INT) {
+        return t1->data.int_val <= t2->data.int_val;
+    }
+    state->failed = true;
+    return false;
+}
+
+bool eq_2(prolog_state_t* state, term_t* arg1, term_t* arg2) {
+    return unify(state, arg1, arg2);
+}
+
+/* Arithmetic evaluation for is/2 */
+int eval_arithmetic(prolog_state_t* state, term_t* expr) {
+    term_t* t = deref(state, expr);
+    
+    if (t->type == TERM_INT) {
+        return t->data.int_val;
+    }
+    
+    if (t->type == TERM_COMPOUND) {
+        if (strcmp(t->data.compound.functor, "+") == 0 && t->data.compound.arity == 2) {
+            int left = eval_arithmetic(state, t->data.compound.args[0]);
+            int right = eval_arithmetic(state, t->data.compound.args[1]);
+            return left + right;
+        }
+        if (strcmp(t->data.compound.functor, "-") == 0 && t->data.compound.arity == 2) {
+            int left = eval_arithmetic(state, t->data.compound.args[0]);
+            int right = eval_arithmetic(state, t->data.compound.args[1]);
+            return left - right;
+        }
+        if (strcmp(t->data.compound.functor, "*") == 0 && t->data.compound.arity == 2) {
+            int left = eval_arithmetic(state, t->data.compound.args[0]);
+            int right = eval_arithmetic(state, t->data.compound.args[1]);
+            return left * right;
+        }
+        if (strcmp(t->data.compound.functor, "/") == 0 && t->data.compound.arity == 2) {
+            int left = eval_arithmetic(state, t->data.compound.args[0]);
+            int right = eval_arithmetic(state, t->data.compound.args[1]);
+            return left / right;
+        }
+        if (strcmp(t->data.compound.functor, "//") == 0 && t->data.compound.arity == 2) {
+            int left = eval_arithmetic(state, t->data.compound.args[0]);
+            int right = eval_arithmetic(state, t->data.compound.args[1]);
+            return left / right;
+        }
+        if (strcmp(t->data.compound.functor, "mod") == 0 && t->data.compound.arity == 2) {
+            int left = eval_arithmetic(state, t->data.compound.args[0]);
+            int right = eval_arithmetic(state, t->data.compound.args[1]);
+            return left % right;
+        }
+    }
+    
+    return 0;
+}
+
+bool is_2(prolog_state_t* state, term_t* arg1, term_t* arg2) {
+    int result = eval_arithmetic(state, arg2);
+    term_t* result_term = create_int(result);
+    return unify(state, arg1, result_term);
+}
+
+/* Built-in I/O predicates */
+void print_term(term_t* term) {
+    if (term->type == TERM_ATOM) {
+        printf("%s", term->data.atom);
+    } else if (term->type == TERM_INT) {
+        printf("%d", term->data.int_val);
+    } else if (term->type == TERM_NIL) {
+        printf("[]");
+    } else if (term->type == TERM_LIST) {
+        printf("[");
+        term_t* current = term;
+        while (current->type == TERM_LIST) {
+            print_term(current->data.list.head);
+            current = current->data.list.tail;
+            if (current->type == TERM_LIST) {
+                printf(", ");
+            }
+        }
+        if (current->type != TERM_NIL) {
+            printf("|");
+            print_term(current);
+        }
+        printf("]");
+    } else if (term->type == TERM_VAR) {
+        printf("_%d", term->data.var_id);
+    } else if (term->type == TERM_COMPOUND) {
+        printf("%s(", term->data.compound.functor);
+        for (int i = 0; i < term->data.compound.arity; i++) {
+            print_term(term->data.compound.args[i]);
+            if (i < term->data.compound.arity - 1) {
+                printf(", ");
+            }
+        }
+        printf(")");
+    }
+}
+
+bool write_1(prolog_state_t* state, term_t* arg1) {
+    term_t* t = deref(state, arg1);
+    print_term(t);
+    return true;
+}
+
+bool format_2(prolog_state_t* state, term_t* arg1, term_t* arg2) {
+    term_t* format_str = deref(state, arg1);
+    term_t* args_list = deref(state, arg2);
+    
+    if (format_str->type != TERM_ATOM) {
+        return false;
+    }
+    
+    /* Simple format implementation - just replaces ~w with argument values */
+    const char* fmt = format_str->data.atom;
+    term_t* current_arg = args_list;
+    
+    for (int i = 0; fmt[i] != \'\\0\'; i++) {
+        if (fmt[i] == \'~\' && fmt[i+1] == \'w\') {
+            if (current_arg->type == TERM_LIST) {
+                print_term(current_arg->data.list.head);
+                current_arg = current_arg->data.list.tail;
+            }
+            i++; /* Skip the \'w\' */
+        } else {
+            putchar(fmt[i]);
+        }
+    }
+    
+    return true;
 }
 
 /* State initialization and cleanup */

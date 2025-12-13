@@ -10,6 +10,8 @@ nondet_test
 nondet_test.c
 comprehensive_test
 comprehensive_test.c
+output_name
+output_name.c
 
 # Test outputs
 prolog_output.txt
