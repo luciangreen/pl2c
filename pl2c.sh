@@ -57,12 +57,9 @@ swipl -g "use_module(pl2c), compile_prolog_to_c('$PROLOG_FILE', '${OUTPUT_NAME}.
     else
         echo "Conversion failed. Running with SWI-Prolog interpreter as fallback..."
         # Fallback: create a wrapper script that runs the Prolog file directly with SWI-Prolog
-        cat > "${OUTPUT_NAME}" << 'WRAPPER_EOF'
+        cat > "${OUTPUT_NAME}" << WRAPPER_EOF
 #!/bin/bash
 # Wrapper script to run Prolog file directly with SWI-Prolog
-WRAPPER_EOF
-        echo "PROLOG_FILE='$PROLOG_FILE'" >> "${OUTPUT_NAME}"
-        cat >> "${OUTPUT_NAME}" << 'WRAPPER_EOF'
 swipl -g "consult('$PROLOG_FILE'), main, halt." -t 'halt(1).'
 WRAPPER_EOF
         chmod +x "${OUTPUT_NAME}"
@@ -72,9 +69,13 @@ WRAPPER_EOF
 
 if [ "$C_COMPILATION_NEEDED" = true ]; then
     echo "Compiling C code..."
-    gcc -o "$OUTPUT_NAME" "${OUTPUT_NAME}.c" -std=c99 -Wall -Wno-unused-variable -lm 2>&1 | grep -v "warning:" || true
+    GCC_OUTPUT=$(gcc -o "$OUTPUT_NAME" "${OUTPUT_NAME}.c" -std=c99 -Wall -Wno-unused-variable -lm 2>&1)
+    GCC_EXIT_CODE=$?
+    
+    # Display output, filtering out warnings
+    echo "$GCC_OUTPUT" | grep -v "warning:" || true
 
-    if [ $? -ne 0 ]; then
+    if [ $GCC_EXIT_CODE -ne 0 ]; then
         echo "Compilation failed!"
         exit 1
     fi
