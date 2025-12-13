@@ -113,6 +113,7 @@ typedef struct {
     int cut_level;
     bool failed;
     int next_var_id;
+    bool backtracking;  /* True when explicitly backtracking for more solutions */
 } prolog_state_t;
 
 /* Function prototypes */
@@ -311,9 +312,9 @@ translate_nondeterministic_predicate(Clauses, FuncName, Params, CCode) :-
     translate_predicate_clauses_with_choicepoints(Clauses, FuncName, 1, NumClauses, ClausesCode),
     format(atom(CCode),
 'bool ~w(prolog_state_t* state~w) {
-    /* Check if resuming from a choice point */
+    /* Check if resuming from a choice point (only when backtracking) */
     int start_clause = 1;
-    if (state->choice_stack && state->choice_stack->predicate_id == (int)(intptr_t)&~w) {
+    if (state->backtracking && state->choice_stack && state->choice_stack->predicate_id == (int)(intptr_t)&~w) {
         start_clause = state->choice_stack->clause_index;
         pop_choice_point(state);
         /* Check for sentinel - all clauses exhausted */
@@ -729,7 +730,9 @@ translate_body((Cond -> Then ; Else), CCode, Depth) :-
 '    /* If-then-else */
     {
         int saved_size = state->bindings.size;
+        do {
 ~w
+        } while (0);
         if (!state->failed) {
             /* Condition succeeded, execute then branch */
 ~w
@@ -834,6 +837,9 @@ translate_body(findall(Template, Goal, Result), CCode, Depth) :-
             /* Check if there are more solutions */
             /* If no choice point exists, we are done */
             if (!findall_state.choice_stack) break;
+            
+            /* Enable backtracking mode for next iteration */
+            findall_state.backtracking = true;
             
             /* Restore bindings to initial state for next iteration */
             if (findall_state.bindings.bindings) {
@@ -2373,6 +2379,7 @@ void init_state(prolog_state_t* state) {
     state->cut_level = 0;
     state->failed = false;
     state->next_var_id = 1000;
+    state->backtracking = false;
 }
 
 void free_state(prolog_state_t* state) {
