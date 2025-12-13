@@ -331,20 +331,19 @@ translate_predicate_clauses([Clause|Rest], Index, CCode) :-
 %% translate_single_clause(+Clause, +Index, -CCode)
 translate_single_clause((Head :- Body), Index, CCode) :-
     !,
-    % Get variables before numbervars
-    term_variables((Head, Body), UniqueVars),
-    length(UniqueVars, NumVars),
-    % Apply numbervars to establish consistent variable naming
-    copy_term((Head :- Body), ClauseCopy),
-    ClauseCopy = (HeadWork :- BodyWork),
-    numbervars(ClauseCopy, 0, _, [functor_name('$VAR')]),
-    % Generate var declarations, head code, and body code using numbered clause
-    generate_var_declarations_numbered(NumVars, VarDecls),
-    translate_head_unifications_with_check(HeadWork, Index, HeadCode),
-    translate_body(BodyWork, BodyCode, 0),
-    % Create a display copy with letter names for comment
-    copy_term((Head :- Body), (HeadDisp :- BodyDisp)),
-    numbervars((HeadDisp :- BodyDisp), 0, _),
+    % Collect all variables
+    term_variables((Head, Body), AllVars),
+    % CRITICAL: Format all variables together to establish consistent naming
+    % This must be done in a format call that includes ALL variables
+    format(atom(_), '~w,~w,~w', [Head, Body, AllVars]),
+    % Generate ALL code strings
+    generate_var_declarations(AllVars, VarDecls),
+    translate_head_unifications_with_check(Head, Index, HeadCode),
+    translate_body(Body, BodyCode, 0),
+    % Create a display copy for the comment
+    copy_term((Head, Body), (HeadDisp, BodyDisp)),
+    numbervars((HeadDisp, BodyDisp), 0, _),
+    % Final assembly
     format(atom(CCode), 
 '    /* Clause ~w: ~w :- ~w */
     {
@@ -362,15 +361,13 @@ translate_single_clause((Head :- Body), Index, CCode) :-
 
 translate_single_clause(Head, Index, CCode) :-
     % Fact (clause without body)
-    % Get variables before numbervars
-    term_variables(Head, UniqueVars),
-    length(UniqueVars, NumVars),
-    % Apply numbervars to establish consistent variable naming
-    copy_term(Head, HeadWork),
-    numbervars(HeadWork, 0, _, [functor_name('$VAR')]),
-    generate_var_declarations_numbered(NumVars, VarDecls),
-    translate_head_unifications_with_check(HeadWork, Index, HeadCode),
-    % Create a display copy for comment
+    % Collect all variables
+    term_variables(Head, AllVars),
+    % CRITICAL: Format all variables together to establish consistent naming
+    format(atom(_), '~w,~w', [Head, AllVars]),
+    generate_var_declarations(AllVars, VarDecls),
+    translate_head_unifications_with_check(Head, Index, HeadCode),
+    % Create a display copy for the comment
     copy_term(Head, HeadDisp),
     numbervars(HeadDisp, 0, _),
     format(atom(CCode), 
@@ -427,6 +424,19 @@ generate_var_declarations_numbered(Count, Decls) :-
     atomic_list_concat(DeclList, '', Decls).
 generate_var_declarations_numbered(_, '').
 
+%% generate_var_declarations_with_count(+Count, -Decls)
+% Generates declarations for var__0, var__1, ... var___{Count-1}
+generate_var_declarations_with_count(Count, Decls) :-
+    Count > 0,
+    !,
+    C1 is Count - 1,
+    findall(Decl, 
+        (between(0, C1, N),
+         format(atom(Decl), '        term_t* var__~w = create_var(state->next_var_id++);\n', [N])),
+        DeclList),
+    atomic_list_concat(DeclList, '', Decls).
+generate_var_declarations_with_count(_, '').
+
 %% translate_head_unifications(+Head, +Index, -CCode)
 % Generates code to unify head arguments with actual parameters (old style with return)
 translate_head_unifications(Head, _, CCode) :-
@@ -456,9 +466,6 @@ translate_head_arg_check(Var, N, CCode) :-
     var(Var),
     !,
     format(atom(CCode), 'unify(state, var_~w, arg~w)', [Var, N]).
-translate_head_arg_check('$VAR'(VN), N, CCode) :-
-    !,
-    format(atom(CCode), 'unify(state, var__VAR_~w, arg~w)', [VN, N]).
 translate_head_arg_check(Arg, N, CCode) :-
     term_to_c_expr(Arg, CExpr),
     format(atom(CCode), 'unify(state, ~w, arg~w)', [CExpr, N]).
@@ -639,9 +646,6 @@ term_to_c_expr(Var, Expr) :-
     var(Var),
     !,
     format(atom(Expr), 'var_~w', [Var]).
-term_to_c_expr('$VAR'(N), Expr) :-
-    !,
-    format(atom(Expr), 'var__VAR_~w', [N]).
 term_to_c_expr(Atom, Expr) :-
     atom(Atom),
     !,
