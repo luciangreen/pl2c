@@ -1,53 +1,4 @@
-% pl2c.pl - Prolog to C Compiler
-% Converts Prolog code into equivalent C code with explicit loops and if-then statements
-
-:- module(pl2c, [
-    compile_prolog_to_c/2,
-    compile_file/2,
-    verify_equivalence/1
-]).
-
-:- use_module(library(lists)).
-:- use_module(library(readutil)).
-
-%% compile_prolog_to_c(+PrologFile, +CFile)
-% Main entry point: compiles a Prolog file to C
-compile_prolog_to_c(PrologFile, CFile) :-
-    read_prolog_file(PrologFile, Clauses),
-    translate_program(Clauses, CCode),
-    write_c_file(CFile, CCode).
-
-%% read_prolog_file(+File, -Clauses)
-% Reads and parses Prolog clauses from a file
-read_prolog_file(File, Clauses) :-
-    open(File, read, Stream),
-    read_clauses(Stream, Clauses),
-    close(Stream).
-
-read_clauses(Stream, Clauses) :-
-    read_term(Stream, Term, []),
-    (   Term == end_of_file
-    ->  Clauses = []
-    ;   Clauses = [Term|Rest],
-        read_clauses(Stream, Rest)
-    ).
-
-%% translate_program(+Clauses, -CCode)
-% Translates a list of Prolog clauses to C code
-translate_program(Clauses, CCode) :-
-    generate_c_header(Header),
-    group_clauses_by_predicate(Clauses, GroupedClauses),
-    generate_predicate_declarations(GroupedClauses, Declarations),
-    translate_predicate_groups(GroupedClauses, PredicateDefs),
-    generate_c_main(MainCode),
-    generate_c_footer(Footer),
-    atomic_list_concat([Header, Declarations, PredicateDefs, MainCode, Footer], '\n', CCode).
-
-%% generate_c_header(-Header)
-% Generates the C header with includes and data structures
-generate_c_header(Header) :-
-    Header = 
-'#define _POSIX_C_SOURCE 200809L
+#define _POSIX_C_SOURCE 200809L
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -205,346 +156,677 @@ bool call_1(prolog_state_t* state, term_t* goal);
 bool call_2(prolog_state_t* state, term_t* closure, term_t* arg1);
 bool call_3(prolog_state_t* state, term_t* closure, term_t* arg1, term_t* arg2);
 bool apply_2(prolog_state_t* state, term_t* goal, term_t* args);
-'.
 
-%% generate_predicate_declarations(+GroupedClauses, -Declarations)
-% Generate forward declarations for all predicates
-generate_predicate_declarations([], '').
-generate_predicate_declarations(Groups, Declarations) :-
-    findall(Decl, (
-        member(Name/Arity-Clauses, Groups),
-        Clauses = [FirstClause|_],
-        clause_head(FirstClause, Head),
-        extract_predicate_info(Head, _, _, Args),
-        translate_args_to_params(Args, Params),
-        sanitize_predicate_name(Name, SanitizedName),
-        format(atom(Decl), 'bool ~w_~w(prolog_state_t* state~w);', [SanitizedName, Arity, Params])
-    ), DeclList),
-    atomic_list_concat(DeclList, '\n', Declarations).
-
-%% translate_clauses(+Clauses, -CCode)
-% Translates each clause to C function code
-translate_clauses([], '').
-translate_clauses(Clauses, CCode) :-
-    Clauses \= [],
-    group_clauses_by_predicate(Clauses, GroupedClauses),
-    translate_predicate_groups(GroupedClauses, CCode).
-
-%% group_clauses_by_predicate(+Clauses, -GroupedClauses)
-% Groups clauses by their predicate name/arity
-group_clauses_by_predicate([], []).
-group_clauses_by_predicate(Clauses, Grouped) :-
-    Clauses \= [],
-    collect_predicate_signatures(Clauses, Signatures),
-    group_by_signature(Signatures, Clauses, Grouped).
-
-collect_predicate_signatures([], []).
-collect_predicate_signatures([Clause|Rest], [Sig|Sigs]) :-
-    clause_signature(Clause, Sig),
-    collect_predicate_signatures(Rest, Sigs).
-
-clause_signature((Head :- _), Name/Arity) :-
-    !,
-    extract_predicate_info(Head, Name, Arity, _).
-clause_signature(Head, Name/Arity) :-
-    extract_predicate_info(Head, Name, Arity, _).
-
-group_by_signature([], [], []).
-group_by_signature(Sigs, Clauses, [Group|RestGroups]) :-
-    Sigs \= [],
-    Sigs = [FirstSig|_],
-    collect_matching_clauses(FirstSig, Sigs, Clauses, MatchingClauses, RemainingClauses, RemainingSigs),
-    Group = FirstSig-MatchingClauses,
-    group_by_signature(RemainingSigs, RemainingClauses, RestGroups).
-
-collect_matching_clauses(_, [], [], [], [], []).
-collect_matching_clauses(TargetSig, [Sig|Sigs], [Clause|Clauses], [Clause|Matching], Remaining, RemainingSigs) :-
-    Sig = TargetSig,
-    !,
-    collect_matching_clauses(TargetSig, Sigs, Clauses, Matching, Remaining, RemainingSigs).
-collect_matching_clauses(TargetSig, [Sig|Sigs], [Clause|Clauses], Matching, [Clause|Remaining], [Sig|RemainingSigs]) :-
-    collect_matching_clauses(TargetSig, Sigs, Clauses, Matching, Remaining, RemainingSigs).
-
-%% translate_predicate_groups(+Groups, -CCode)
-translate_predicate_groups([], '').
-translate_predicate_groups([Group|Rest], CCode) :-
-    translate_predicate_group(Group, GroupCode),
-    translate_predicate_groups(Rest, RestCode),
-    atomic_list_concat([GroupCode, RestCode], '\n', CCode).
-
-%% translate_predicate_group(+Group, -CCode)
-% Translates all clauses for a single predicate into one C function
-translate_predicate_group(Name/Arity-Clauses, CCode) :-
-    % Get parameters from first clause
-    Clauses = [FirstClause|_],
-    clause_head(FirstClause, Head),
-    extract_predicate_info(Head, _, _, Args),
-    translate_args_to_params(Args, Params),
-    sanitize_predicate_name(Name, SanitizedName),
-    format(atom(FuncName), '~w_~w', [SanitizedName, Arity]),
-    translate_predicate_clauses(Clauses, 1, ClausesCode),
-    format(atom(CCode), 
-'bool ~w(prolog_state_t* state~w) {
-~w
-    return false; /* No clause matched */
-}', [FuncName, Params, ClausesCode]).
-
-clause_head((Head :- _), Head) :- !.
-clause_head(Head, Head).
-
-%% sanitize_predicate_name(+Name, -SanitizedName)
-% Converts Prolog operators to valid C identifiers
-sanitize_predicate_name('>', 'gt') :- !.
-sanitize_predicate_name('<', 'lt') :- !.
-sanitize_predicate_name('>=', 'gte') :- !.
-sanitize_predicate_name('=<', 'lte') :- !.
-sanitize_predicate_name('=', 'eq') :- !.
-sanitize_predicate_name('==', 'eqeq') :- !.
-sanitize_predicate_name('\\=', 'neq') :- !.
-sanitize_predicate_name('\\==', 'neqeq') :- !.
-sanitize_predicate_name('is', 'is') :- !.
-sanitize_predicate_name('+', 'plus') :- !.
-sanitize_predicate_name('-', 'minus') :- !.
-sanitize_predicate_name('*', 'times') :- !.
-sanitize_predicate_name('/', 'div') :- !.
-sanitize_predicate_name('//', 'intdiv') :- !.
-sanitize_predicate_name('mod', 'mod') :- !.
-sanitize_predicate_name('@<', 'term_lt') :- !.
-sanitize_predicate_name('@>', 'term_gt') :- !.
-sanitize_predicate_name('@=<', 'term_lte') :- !.
-sanitize_predicate_name('@>=', 'term_gte') :- !.
-sanitize_predicate_name('=..', 'univ') :- !.
-sanitize_predicate_name('!', 'cut') :- !.
-sanitize_predicate_name('true', 'true') :- !.
-sanitize_predicate_name('->', 'if_then') :- !.
-sanitize_predicate_name(';', 'semicolon') :- !.
-sanitize_predicate_name(Name, Name).
-
-%% translate_predicate_clauses(+Clauses, +Index, -CCode)
-translate_predicate_clauses([], _, '').
-translate_predicate_clauses([Clause|Rest], Index, CCode) :-
-    translate_single_clause(Clause, Index, ClauseCode),
-    NextIndex is Index + 1,
-    translate_predicate_clauses(Rest, NextIndex, RestCode),
-    atomic_list_concat([ClauseCode, RestCode], '', CCode).
-
-%% translate_single_clause(+Clause, +Index, -CCode)
-translate_single_clause((Head :- Body), Index, CCode) :-
-    !,
-    % Use term_variables to get unique variables directly
-    term_variables((Head, Body), UniqueVars),
-    generate_var_declarations(UniqueVars, VarDecls),
-    translate_head_unifications_with_check(Head, Index, HeadCode),
-    translate_body(Body, BodyCode, 0),
-    format(atom(CCode), 
-'    /* Clause ~w: ~w :- ~w */
+bool city_1(prolog_state_t* state, term_t* arg1);
+bool country_2(prolog_state_t* state, term_t* arg1, term_t* arg2);
+bool capital_2(prolog_state_t* state, term_t* arg1, term_t* arg2);
+bool list_length_2(prolog_state_t* state, term_t* arg1, term_t* arg2);
+bool reverse_list_2(prolog_state_t* state, term_t* arg1, term_t* arg2);
+bool sum_list_2(prolog_state_t* state, term_t* arg1, term_t* arg2);
+bool between_3(prolog_state_t* state, term_t* arg1, term_t* arg2, term_t* arg3);
+bool max_3(prolog_state_t* state, term_t* arg1, term_t* arg2, term_t* arg3);
+bool min_3(prolog_state_t* state, term_t* arg1, term_t* arg2, term_t* arg3);
+bool if_then_else_3(prolog_state_t* state, term_t* arg1, term_t* arg2, term_t* arg3);
+bool append_3(prolog_state_t* state, term_t* arg1, term_t* arg2, term_t* arg3);
+bool member_2(prolog_state_t* state, term_t* arg1, term_t* arg2);
+bool last_elem_2(prolog_state_t* state, term_t* arg1, term_t* arg2);
+bool nth_3(prolog_state_t* state, term_t* arg1, term_t* arg2, term_t* arg3);
+bool positive_numbers_2(prolog_state_t* state, term_t* arg1, term_t* arg2);
+bool map_double_2(prolog_state_t* state, term_t* arg1, term_t* arg2);
+bool all_cities_1(prolog_state_t* state, term_t* arg1);
+bool all_countries_1(prolog_state_t* state, term_t* arg1);
+bool find_capitals_1(prolog_state_t* state, term_t* arg1);
+bool same_country_pair_2(prolog_state_t* state, term_t* arg1, term_t* arg2);
+bool factorial_2(prolog_state_t* state, term_t* arg1, term_t* arg2);
+bool fibonacci_2(prolog_state_t* state, term_t* arg1, term_t* arg2);
+bool gcd_3(prolog_state_t* state, term_t* arg1, term_t* arg2, term_t* arg3);
+bool insert_sorted_3(prolog_state_t* state, term_t* arg1, term_t* arg2, term_t* arg3);
+bool insertion_sort_2(prolog_state_t* state, term_t* arg1, term_t* arg2);
+bool main_0(prolog_state_t* state);
+bool city_1(prolog_state_t* state, term_t* arg1) {
+    /* Clause 1: city(london) */
     {
         int saved_bindings_size = state->bindings.size;
-~w~w
-            do {
-~w            } while (0);
-            if (!state->failed) return true;
-        }
-        /* Restore bindings for next clause */
-        state->bindings.size = saved_bindings_size;
-        state->failed = false;
-    }
-', [Index, Head, Body, VarDecls, HeadCode, BodyCode]).
+        if (unify(state, create_atom("london"), arg1)) {
 
-translate_single_clause(Head, Index, CCode) :-
-    % Fact (clause without body)
-    % Use term_variables to get unique variables directly
-    term_variables(Head, UniqueVars),
-    generate_var_declarations(UniqueVars, VarDecls),
-    translate_head_unifications_with_check(Head, Index, HeadCode),
-    format(atom(CCode), 
-'    /* Clause ~w: ~w */
-    {
-        int saved_bindings_size = state->bindings.size;
-~w~w
             return true;
         }
         /* Restore bindings for next clause */
         state->bindings.size = saved_bindings_size;
         state->failed = false;
     }
-', [Index, Head, VarDecls, HeadCode]).
-
-%% collect_variables(+Term, -Vars)
-% Collects all variables in a term
-collect_variables(Var, [Var]) :- var(Var), !.
-collect_variables(Term, Vars) :-
-    compound(Term),
-    !,
-    Term =.. [_|Args],
-    collect_variables_list(Args, Vars).
-collect_variables(_, []).
-
-collect_variables_list([], []).
-collect_variables_list([H|T], Vars) :-
-    collect_variables(H, HVars),
-    collect_variables_list(T, TVars),
-    append(HVars, TVars, Vars).
-
-%% generate_var_declarations(+Vars, -Decls)
-generate_var_declarations([], '').
-generate_var_declarations(Vars, Decls) :-
-    Vars \= [],
-    generate_var_decls_with_ids(Vars, 0, DeclList),
-    atomic_list_concat(DeclList, '', Decls).
-
-generate_var_decls_with_ids([], _, []).
-generate_var_decls_with_ids([V|Vs], N, [Decl|Decls]) :-
-    format(atom(Decl), '        term_t* var_~w = create_var(state->next_var_id++);\n', [V]),
-    N1 is N + 1,
-    generate_var_decls_with_ids(Vs, N1, Decls).
-
-%% translate_head_unifications(+Head, +Index, -CCode)
-% Generates code to unify head arguments with actual parameters (old style with return)
-translate_head_unifications(Head, _, CCode) :-
-    extract_predicate_info(Head, _, _, Args),
-    translate_head_args(Args, 1, CCode).
-
-%% translate_head_unifications_with_check(+Head, +Index, -CCode)
-% Generates code to unify head arguments with conditional check instead of return
-translate_head_unifications_with_check(Head, _, CCode) :-
-    extract_predicate_info(Head, _, _, Args),
-    translate_head_args_with_check(Args, 1, [], UnifyList),
-    ( UnifyList = [] ->
-        CCode = '        if (true) {\n'
-    ;
-        atomic_list_concat(UnifyList, ' &&\n            ', UnifyCondition),
-        format(atom(CCode), '        if (~w) {\n', [UnifyCondition])
-    ).
-
-translate_head_args_with_check([], _, Acc, Acc).
-translate_head_args_with_check([Arg|Args], N, Acc, Result) :-
-    translate_head_arg_check(Arg, N, ArgCode),
-    N1 is N + 1,
-    append(Acc, [ArgCode], NewAcc),
-    translate_head_args_with_check(Args, N1, NewAcc, Result).
-
-translate_head_arg_check(Var, N, CCode) :-
-    var(Var),
-    !,
-    format(atom(CCode), 'unify(state, var_~w, arg~w)', [Var, N]).
-translate_head_arg_check(Arg, N, CCode) :-
-    term_to_c_expr(Arg, CExpr),
-    format(atom(CCode), 'unify(state, ~w, arg~w)', [CExpr, N]).
-
-translate_head_args([], _, '').
-translate_head_args([Arg|Args], N, CCode) :-
-    translate_head_arg_unify(Arg, N, ArgCode),
-    N1 is N + 1,
-    translate_head_args(Args, N1, RestCode),
-    atomic_list_concat([ArgCode, RestCode], '', CCode).
-
-translate_head_arg_unify(Var, N, CCode) :-
-    var(Var),
-    !,
-    format(atom(CCode), '        if (!unify(state, var_~w, arg~w)) return false;\n', [Var, N]).
-translate_head_arg_unify(Arg, N, CCode) :-
-    term_to_c_expr(Arg, CExpr),
-    format(atom(CCode), '        if (!unify(state, ~w, arg~w)) return false;\n', [CExpr, N]).
-
-%% translate_clause(+Clause, -CCode)
-% Translates a single clause to C code
-translate_clause((Head :- Body), CCode) :-
-    !,
-    extract_predicate_info(Head, Name, Arity, Args),
-    format(atom(FuncName), '~w_~w', [Name, Arity]),
-    translate_args_to_params(Args, Params),
-    translate_body(Body, BodyCode, 0),
-    format(atom(CCode), 
-'bool ~w(prolog_state_t* state~w) {
-    /* Clause: ~w :- ~w */
-~w
-    return true;
-}', [FuncName, Params, Head, Body, BodyCode]).
-
-translate_clause(Head, CCode) :-
-    % Fact (clause without body)
-    extract_predicate_info(Head, Name, Arity, Args),
-    format(atom(FuncName), '~w_~w', [Name, Arity]),
-    translate_args_to_params(Args, Params),
-    format(atom(CCode), 
-'bool ~w(prolog_state_t* state~w) {
-    /* Fact: ~w */
-    return true;
-}', [FuncName, Params, Head]).
-
-%% extract_predicate_info(+Term, -Name, -Arity, -Args)
-extract_predicate_info(Term, Name, Arity, Args) :-
-    Term =.. [Name|Args],
-    length(Args, Arity).
-
-%% translate_args_to_params(+Args, -Params)
-translate_args_to_params([], '').
-translate_args_to_params(Args, Params) :-
-    Args \= [],
-    length(Args, N),
-    findall(P, (between(1, N, I), format(atom(P), ', term_t* arg~w', [I])), ParamList),
-    atomic_list_concat(ParamList, '', Params).
-
-%% translate_body(+Body, -CCode, +Depth)
-% Translates clause body to C code with proper control flow
-translate_body(true, '    /* true */\n', _) :- !.
-translate_body(fail, '    state->failed = true;\n    break;\n', _) :- !.
-translate_body(!, CCode, _) :-
-    !,
-    CCode = '    perform_cut(state);\n'.
-translate_body((A, B), CCode, Depth) :-
-    !,
-    % Conjunction: execute A then B
-    translate_body(A, ACode, Depth),
-    translate_body(B, BCode, Depth),
-    format(atom(CCode), '~w~w', [ACode, BCode]).
-translate_body((Cond -> Then ; Else), CCode, Depth) :-
-    !,
-    % If-then-else: if Cond succeeds, execute Then, otherwise execute Else
-    translate_body(Cond, CondCode, Depth),
-    translate_body(Then, ThenCode, Depth),
-    translate_body(Else, ElseCode, Depth),
-    format(atom(CCode),
-'    /* If-then-else: ~w -> ~w ; ~w */
+    /* Clause 2: city(paris) */
     {
-        int saved_size = state->bindings.size;
-~w
-        if (!state->failed) {
-            /* Condition succeeded, execute then branch */
-~w
-        } else {
-            /* Condition failed, execute else branch */
-            state->bindings.size = saved_size;
-            state->failed = false;
-~w
+        int saved_bindings_size = state->bindings.size;
+        if (unify(state, create_atom("paris"), arg1)) {
+
+            return true;
         }
-    }
-', [Cond, Then, Else, CondCode, ThenCode, ElseCode]).
-translate_body((A ; B), CCode, Depth) :-
-    !,
-    % Disjunction: try A, if it fails try B
-    NextDepth is Depth + 1,
-    translate_body(A, ACode, NextDepth),
-    translate_body(B, BCode, NextDepth),
-    format(atom(CCode),
-'    /* Disjunction */
-    push_choice_point(state, 0, 1);
-    if (!state->failed) {
-~w
-    }
-    if (state->failed) {
-        pop_choice_point(state);
+        /* Restore bindings for next clause */
+        state->bindings.size = saved_bindings_size;
         state->failed = false;
-~w
     }
-', [ACode, BCode]).
-translate_body(findall(Template, Goal, Result), CCode, Depth) :-
-    !,
-    % findall/3: enumerate all solutions
-    translate_body(Goal, GoalCode, Depth),
-    format(atom(CCode),
-'    /* findall(~w, ~w, ~w) */
+    /* Clause 3: city(tokyo) */
+    {
+        int saved_bindings_size = state->bindings.size;
+        if (unify(state, create_atom("tokyo"), arg1)) {
+
+            return true;
+        }
+        /* Restore bindings for next clause */
+        state->bindings.size = saved_bindings_size;
+        state->failed = false;
+    }
+    /* Clause 4: city(newYork) */
+    {
+        int saved_bindings_size = state->bindings.size;
+        if (unify(state, create_atom("newYork"), arg1)) {
+
+            return true;
+        }
+        /* Restore bindings for next clause */
+        state->bindings.size = saved_bindings_size;
+        state->failed = false;
+    }
+
+    return false; /* No clause matched */
+}
+bool country_2(prolog_state_t* state, term_t* arg1, term_t* arg2) {
+    /* Clause 1: country(uk,london) */
+    {
+        int saved_bindings_size = state->bindings.size;
+        if (unify(state, create_atom("uk"), arg1) &&
+            unify(state, create_atom("london"), arg2)) {
+
+            return true;
+        }
+        /* Restore bindings for next clause */
+        state->bindings.size = saved_bindings_size;
+        state->failed = false;
+    }
+    /* Clause 2: country(france,paris) */
+    {
+        int saved_bindings_size = state->bindings.size;
+        if (unify(state, create_atom("france"), arg1) &&
+            unify(state, create_atom("paris"), arg2)) {
+
+            return true;
+        }
+        /* Restore bindings for next clause */
+        state->bindings.size = saved_bindings_size;
+        state->failed = false;
+    }
+    /* Clause 3: country(japan,tokyo) */
+    {
+        int saved_bindings_size = state->bindings.size;
+        if (unify(state, create_atom("japan"), arg1) &&
+            unify(state, create_atom("tokyo"), arg2)) {
+
+            return true;
+        }
+        /* Restore bindings for next clause */
+        state->bindings.size = saved_bindings_size;
+        state->failed = false;
+    }
+    /* Clause 4: country(usa,newYork) */
+    {
+        int saved_bindings_size = state->bindings.size;
+        if (unify(state, create_atom("usa"), arg1) &&
+            unify(state, create_atom("newYork"), arg2)) {
+
+            return true;
+        }
+        /* Restore bindings for next clause */
+        state->bindings.size = saved_bindings_size;
+        state->failed = false;
+    }
+
+    return false; /* No clause matched */
+}
+bool capital_2(prolog_state_t* state, term_t* arg1, term_t* arg2) {
+    /* Clause 1: capital(_2772,_2774) :- country(_2772,_2774) */
+    {
+        int saved_bindings_size = state->bindings.size;
+        term_t* var__2772 = create_var(state->next_var_id++);
+        term_t* var__2774 = create_var(state->next_var_id++);
+        if (unify(state, var__2772, arg1) &&
+            unify(state, var__2774, arg2)) {
+
+            do {
+    if (!country_2(state, var__2772, var__2774)) { state->failed = true; break; }
+            } while (0);
+            if (!state->failed) return true;
+        }
+        /* Restore bindings for next clause */
+        state->bindings.size = saved_bindings_size;
+        state->failed = false;
+    }
+
+    return false; /* No clause matched */
+}
+bool list_length_2(prolog_state_t* state, term_t* arg1, term_t* arg2) {
+    /* Clause 1: list_length([],0) */
+    {
+        int saved_bindings_size = state->bindings.size;
+        if (unify(state, create_nil(), arg1) &&
+            unify(state, create_int(0), arg2)) {
+
+            return true;
+        }
+        /* Restore bindings for next clause */
+        state->bindings.size = saved_bindings_size;
+        state->failed = false;
+    }
+    /* Clause 2: list_length([_2814|_2816],_2822) :- list_length(_2816,_2828),_2822 is _2828+1 */
+    {
+        int saved_bindings_size = state->bindings.size;
+        term_t* var__2814 = create_var(state->next_var_id++);
+        term_t* var__2816 = create_var(state->next_var_id++);
+        term_t* var__2822 = create_var(state->next_var_id++);
+        term_t* var__2828 = create_var(state->next_var_id++);
+        if (unify(state, create_list(var__2814, var__2816), arg1) &&
+            unify(state, var__2822, arg2)) {
+
+            do {
+    if (!list_length_2(state, var__2816, var__2828)) { state->failed = true; break; }
+    if (!is_2(state, var__2822, create_compound("+", 2, (term_t*[]){var__2828, create_int(1)}))) { state->failed = true; break; }
+            } while (0);
+            if (!state->failed) return true;
+        }
+        /* Restore bindings for next clause */
+        state->bindings.size = saved_bindings_size;
+        state->failed = false;
+    }
+
+    return false; /* No clause matched */
+}
+bool reverse_list_2(prolog_state_t* state, term_t* arg1, term_t* arg2) {
+    /* Clause 1: reverse_list([],[]) */
+    {
+        int saved_bindings_size = state->bindings.size;
+        if (unify(state, create_nil(), arg1) &&
+            unify(state, create_nil(), arg2)) {
+
+            return true;
+        }
+        /* Restore bindings for next clause */
+        state->bindings.size = saved_bindings_size;
+        state->failed = false;
+    }
+    /* Clause 2: reverse_list([_2880|_2882],_2888) :- reverse_list(_2882,_2894),append(_2894,[_2880],_2888) */
+    {
+        int saved_bindings_size = state->bindings.size;
+        term_t* var__2880 = create_var(state->next_var_id++);
+        term_t* var__2882 = create_var(state->next_var_id++);
+        term_t* var__2888 = create_var(state->next_var_id++);
+        term_t* var__2894 = create_var(state->next_var_id++);
+        if (unify(state, create_list(var__2880, var__2882), arg1) &&
+            unify(state, var__2888, arg2)) {
+
+            do {
+    if (!reverse_list_2(state, var__2882, var__2894)) { state->failed = true; break; }
+    if (!append_3(state, var__2894, create_list(var__2880, create_nil()), var__2888)) { state->failed = true; break; }
+            } while (0);
+            if (!state->failed) return true;
+        }
+        /* Restore bindings for next clause */
+        state->bindings.size = saved_bindings_size;
+        state->failed = false;
+    }
+
+    return false; /* No clause matched */
+}
+bool sum_list_2(prolog_state_t* state, term_t* arg1, term_t* arg2) {
+    /* Clause 1: sum_list([],0) */
+    {
+        int saved_bindings_size = state->bindings.size;
+        if (unify(state, create_nil(), arg1) &&
+            unify(state, create_int(0), arg2)) {
+
+            return true;
+        }
+        /* Restore bindings for next clause */
+        state->bindings.size = saved_bindings_size;
+        state->failed = false;
+    }
+    /* Clause 2: sum_list([_2950|_2952],_2958) :- sum_list(_2952,_2964),_2958 is _2950+_2964 */
+    {
+        int saved_bindings_size = state->bindings.size;
+        term_t* var__2950 = create_var(state->next_var_id++);
+        term_t* var__2952 = create_var(state->next_var_id++);
+        term_t* var__2958 = create_var(state->next_var_id++);
+        term_t* var__2964 = create_var(state->next_var_id++);
+        if (unify(state, create_list(var__2950, var__2952), arg1) &&
+            unify(state, var__2958, arg2)) {
+
+            do {
+    if (!sum_list_2(state, var__2952, var__2964)) { state->failed = true; break; }
+    if (!is_2(state, var__2958, create_compound("+", 2, (term_t*[]){var__2950, var__2964}))) { state->failed = true; break; }
+            } while (0);
+            if (!state->failed) return true;
+        }
+        /* Restore bindings for next clause */
+        state->bindings.size = saved_bindings_size;
+        state->failed = false;
+    }
+
+    return false; /* No clause matched */
+}
+bool between_3(prolog_state_t* state, term_t* arg1, term_t* arg2, term_t* arg3) {
+    /* Clause 1: between(_3000,_3002,_3000) :- _3000=<_3002 */
+    {
+        int saved_bindings_size = state->bindings.size;
+        term_t* var__3000 = create_var(state->next_var_id++);
+        term_t* var__3002 = create_var(state->next_var_id++);
+        if (unify(state, var__3000, arg1) &&
+            unify(state, var__3002, arg2) &&
+            unify(state, var__3000, arg3)) {
+
+            do {
+    if (!lte_2(state, var__3000, var__3002)) { state->failed = true; break; }
+            } while (0);
+            if (!state->failed) return true;
+        }
+        /* Restore bindings for next clause */
+        state->bindings.size = saved_bindings_size;
+        state->failed = false;
+    }
+    /* Clause 2: between(_3028,_3030,_3032) :- _3028<_3030,_3048 is _3028+1,between(_3048,_3030,_3032) */
+    {
+        int saved_bindings_size = state->bindings.size;
+        term_t* var__3028 = create_var(state->next_var_id++);
+        term_t* var__3030 = create_var(state->next_var_id++);
+        term_t* var__3032 = create_var(state->next_var_id++);
+        term_t* var__3048 = create_var(state->next_var_id++);
+        if (unify(state, var__3028, arg1) &&
+            unify(state, var__3030, arg2) &&
+            unify(state, var__3032, arg3)) {
+
+            do {
+    if (!lt_2(state, var__3028, var__3030)) { state->failed = true; break; }
+    if (!is_2(state, var__3048, create_compound("+", 2, (term_t*[]){var__3028, create_int(1)}))) { state->failed = true; break; }
+    if (!between_3(state, var__3048, var__3030, var__3032)) { state->failed = true; break; }
+            } while (0);
+            if (!state->failed) return true;
+        }
+        /* Restore bindings for next clause */
+        state->bindings.size = saved_bindings_size;
+        state->failed = false;
+    }
+
+    return false; /* No clause matched */
+}
+bool max_3(prolog_state_t* state, term_t* arg1, term_t* arg2, term_t* arg3) {
+    /* Clause 1: max(_3088,_3090,_3088) :- _3088>=_3090,! */
+    {
+        int saved_bindings_size = state->bindings.size;
+        term_t* var__3088 = create_var(state->next_var_id++);
+        term_t* var__3090 = create_var(state->next_var_id++);
+        if (unify(state, var__3088, arg1) &&
+            unify(state, var__3090, arg2) &&
+            unify(state, var__3088, arg3)) {
+
+            do {
+    if (!gte_2(state, var__3088, var__3090)) { state->failed = true; break; }
+    perform_cut(state);
+            } while (0);
+            if (!state->failed) return true;
+        }
+        /* Restore bindings for next clause */
+        state->bindings.size = saved_bindings_size;
+        state->failed = false;
+    }
+    /* Clause 2: max(_3122,_3124,_3124) */
+    {
+        int saved_bindings_size = state->bindings.size;
+        term_t* var__3122 = create_var(state->next_var_id++);
+        term_t* var__3124 = create_var(state->next_var_id++);
+        if (unify(state, var__3122, arg1) &&
+            unify(state, var__3124, arg2) &&
+            unify(state, var__3124, arg3)) {
+
+            return true;
+        }
+        /* Restore bindings for next clause */
+        state->bindings.size = saved_bindings_size;
+        state->failed = false;
+    }
+
+    return false; /* No clause matched */
+}
+bool min_3(prolog_state_t* state, term_t* arg1, term_t* arg2, term_t* arg3) {
+    /* Clause 1: min(_3138,_3140,_3138) :- _3138=<_3140,! */
+    {
+        int saved_bindings_size = state->bindings.size;
+        term_t* var__3138 = create_var(state->next_var_id++);
+        term_t* var__3140 = create_var(state->next_var_id++);
+        if (unify(state, var__3138, arg1) &&
+            unify(state, var__3140, arg2) &&
+            unify(state, var__3138, arg3)) {
+
+            do {
+    if (!lte_2(state, var__3138, var__3140)) { state->failed = true; break; }
+    perform_cut(state);
+            } while (0);
+            if (!state->failed) return true;
+        }
+        /* Restore bindings for next clause */
+        state->bindings.size = saved_bindings_size;
+        state->failed = false;
+    }
+    /* Clause 2: min(_3172,_3174,_3174) */
+    {
+        int saved_bindings_size = state->bindings.size;
+        term_t* var__3172 = create_var(state->next_var_id++);
+        term_t* var__3174 = create_var(state->next_var_id++);
+        if (unify(state, var__3172, arg1) &&
+            unify(state, var__3174, arg2) &&
+            unify(state, var__3174, arg3)) {
+
+            return true;
+        }
+        /* Restore bindings for next clause */
+        state->bindings.size = saved_bindings_size;
+        state->failed = false;
+    }
+
+    return false; /* No clause matched */
+}
+bool if_then_else_3(prolog_state_t* state, term_t* arg1, term_t* arg2, term_t* arg3) {
+    /* Clause 1: if_then_else(true,true,_3192) :- true,!,true */
+    {
+        int saved_bindings_size = state->bindings.size;
+        term_t* var__3188 = create_var(state->next_var_id++);
+        term_t* var__3190 = create_var(state->next_var_id++);
+        term_t* var__3192 = create_var(state->next_var_id++);
+        if (unify(state, var__3188, arg1) &&
+            unify(state, var__3190, arg2) &&
+            unify(state, var__3192, arg3)) {
+
+            do {
+    /* true */
+    perform_cut(state);
+    /* true */
+            } while (0);
+            if (!state->failed) return true;
+        }
+        /* Restore bindings for next clause */
+        state->bindings.size = saved_bindings_size;
+        state->failed = false;
+    }
+    /* Clause 2: if_then_else(_3222,_3224,true) :- true */
+    {
+        int saved_bindings_size = state->bindings.size;
+        term_t* var__3222 = create_var(state->next_var_id++);
+        term_t* var__3224 = create_var(state->next_var_id++);
+        term_t* var__3226 = create_var(state->next_var_id++);
+        if (unify(state, var__3222, arg1) &&
+            unify(state, var__3224, arg2) &&
+            unify(state, var__3226, arg3)) {
+
+            do {
+    /* true */
+            } while (0);
+            if (!state->failed) return true;
+        }
+        /* Restore bindings for next clause */
+        state->bindings.size = saved_bindings_size;
+        state->failed = false;
+    }
+
+    return false; /* No clause matched */
+}
+bool append_3(prolog_state_t* state, term_t* arg1, term_t* arg2, term_t* arg3) {
+    /* Clause 1: append([],_3246,_3246) */
+    {
+        int saved_bindings_size = state->bindings.size;
+        term_t* var__3246 = create_var(state->next_var_id++);
+        if (unify(state, create_nil(), arg1) &&
+            unify(state, var__3246, arg2) &&
+            unify(state, var__3246, arg3)) {
+
+            return true;
+        }
+        /* Restore bindings for next clause */
+        state->bindings.size = saved_bindings_size;
+        state->failed = false;
+    }
+    /* Clause 2: append([_3262|_3264],_3278,[_3262|_3272]) :- append(_3264,_3278,_3272) */
+    {
+        int saved_bindings_size = state->bindings.size;
+        term_t* var__3262 = create_var(state->next_var_id++);
+        term_t* var__3264 = create_var(state->next_var_id++);
+        term_t* var__3278 = create_var(state->next_var_id++);
+        term_t* var__3272 = create_var(state->next_var_id++);
+        if (unify(state, create_list(var__3262, var__3264), arg1) &&
+            unify(state, var__3278, arg2) &&
+            unify(state, create_list(var__3262, var__3272), arg3)) {
+
+            do {
+    if (!append_3(state, var__3264, var__3278, var__3272)) { state->failed = true; break; }
+            } while (0);
+            if (!state->failed) return true;
+        }
+        /* Restore bindings for next clause */
+        state->bindings.size = saved_bindings_size;
+        state->failed = false;
+    }
+
+    return false; /* No clause matched */
+}
+bool member_2(prolog_state_t* state, term_t* arg1, term_t* arg2) {
+    /* Clause 1: member(_3308,[_3308|_3310]) */
+    {
+        int saved_bindings_size = state->bindings.size;
+        term_t* var__3308 = create_var(state->next_var_id++);
+        term_t* var__3310 = create_var(state->next_var_id++);
+        if (unify(state, var__3308, arg1) &&
+            unify(state, create_list(var__3308, var__3310), arg2)) {
+
+            return true;
+        }
+        /* Restore bindings for next clause */
+        state->bindings.size = saved_bindings_size;
+        state->failed = false;
+    }
+    /* Clause 2: member(_3336,[_3330|_3332]) :- member(_3336,_3332) */
+    {
+        int saved_bindings_size = state->bindings.size;
+        term_t* var__3336 = create_var(state->next_var_id++);
+        term_t* var__3330 = create_var(state->next_var_id++);
+        term_t* var__3332 = create_var(state->next_var_id++);
+        if (unify(state, var__3336, arg1) &&
+            unify(state, create_list(var__3330, var__3332), arg2)) {
+
+            do {
+    if (!member_2(state, var__3336, var__3332)) { state->failed = true; break; }
+            } while (0);
+            if (!state->failed) return true;
+        }
+        /* Restore bindings for next clause */
+        state->bindings.size = saved_bindings_size;
+        state->failed = false;
+    }
+
+    return false; /* No clause matched */
+}
+bool last_elem_2(prolog_state_t* state, term_t* arg1, term_t* arg2) {
+    /* Clause 1: last_elem([_3364],_3364) */
+    {
+        int saved_bindings_size = state->bindings.size;
+        term_t* var__3364 = create_var(state->next_var_id++);
+        if (unify(state, create_list(var__3364, create_nil()), arg1) &&
+            unify(state, var__3364, arg2)) {
+
+            return true;
+        }
+        /* Restore bindings for next clause */
+        state->bindings.size = saved_bindings_size;
+        state->failed = false;
+    }
+    /* Clause 2: last_elem([_3386|_3388],_3394) :- last_elem(_3388,_3394) */
+    {
+        int saved_bindings_size = state->bindings.size;
+        term_t* var__3386 = create_var(state->next_var_id++);
+        term_t* var__3388 = create_var(state->next_var_id++);
+        term_t* var__3394 = create_var(state->next_var_id++);
+        if (unify(state, create_list(var__3386, var__3388), arg1) &&
+            unify(state, var__3394, arg2)) {
+
+            do {
+    if (!last_elem_2(state, var__3388, var__3394)) { state->failed = true; break; }
+            } while (0);
+            if (!state->failed) return true;
+        }
+        /* Restore bindings for next clause */
+        state->bindings.size = saved_bindings_size;
+        state->failed = false;
+    }
+
+    return false; /* No clause matched */
+}
+bool nth_3(prolog_state_t* state, term_t* arg1, term_t* arg2, term_t* arg3) {
+    /* Clause 1: nth(0,[_3420|_3422],_3420) */
+    {
+        int saved_bindings_size = state->bindings.size;
+        term_t* var__3420 = create_var(state->next_var_id++);
+        term_t* var__3422 = create_var(state->next_var_id++);
+        if (unify(state, create_int(0), arg1) &&
+            unify(state, create_list(var__3420, var__3422), arg2) &&
+            unify(state, var__3420, arg3)) {
+
+            return true;
+        }
+        /* Restore bindings for next clause */
+        state->bindings.size = saved_bindings_size;
+        state->failed = false;
+    }
+    /* Clause 2: nth(_3450,[_3444|_3446],_3454) :- _3450>0,_3470 is _3450-1,nth(_3470,_3446,_3454) */
+    {
+        int saved_bindings_size = state->bindings.size;
+        term_t* var__3450 = create_var(state->next_var_id++);
+        term_t* var__3444 = create_var(state->next_var_id++);
+        term_t* var__3446 = create_var(state->next_var_id++);
+        term_t* var__3454 = create_var(state->next_var_id++);
+        term_t* var__3470 = create_var(state->next_var_id++);
+        if (unify(state, var__3450, arg1) &&
+            unify(state, create_list(var__3444, var__3446), arg2) &&
+            unify(state, var__3454, arg3)) {
+
+            do {
+    if (!gt_2(state, var__3450, create_int(0))) { state->failed = true; break; }
+    if (!is_2(state, var__3470, create_compound("-", 2, (term_t*[]){var__3450, create_int(1)}))) { state->failed = true; break; }
+    if (!nth_3(state, var__3470, var__3446, var__3454)) { state->failed = true; break; }
+            } while (0);
+            if (!state->failed) return true;
+        }
+        /* Restore bindings for next clause */
+        state->bindings.size = saved_bindings_size;
+        state->failed = false;
+    }
+
+    return false; /* No clause matched */
+}
+bool positive_numbers_2(prolog_state_t* state, term_t* arg1, term_t* arg2) {
+    /* Clause 1: positive_numbers([],[]) */
+    {
+        int saved_bindings_size = state->bindings.size;
+        if (unify(state, create_nil(), arg1) &&
+            unify(state, create_nil(), arg2)) {
+
+            return true;
+        }
+        /* Restore bindings for next clause */
+        state->bindings.size = saved_bindings_size;
+        state->failed = false;
+    }
+    /* Clause 2: positive_numbers([_3526|_3528],[_3526|_3536]) :- _3526>0,!,positive_numbers(_3528,_3536) */
+    {
+        int saved_bindings_size = state->bindings.size;
+        term_t* var__3526 = create_var(state->next_var_id++);
+        term_t* var__3528 = create_var(state->next_var_id++);
+        term_t* var__3536 = create_var(state->next_var_id++);
+        if (unify(state, create_list(var__3526, var__3528), arg1) &&
+            unify(state, create_list(var__3526, var__3536), arg2)) {
+
+            do {
+    if (!gt_2(state, var__3526, create_int(0))) { state->failed = true; break; }
+    perform_cut(state);
+    if (!positive_numbers_2(state, var__3528, var__3536)) { state->failed = true; break; }
+            } while (0);
+            if (!state->failed) return true;
+        }
+        /* Restore bindings for next clause */
+        state->bindings.size = saved_bindings_size;
+        state->failed = false;
+    }
+    /* Clause 3: positive_numbers([_3586|_3588],_3594) :- positive_numbers(_3588,_3594) */
+    {
+        int saved_bindings_size = state->bindings.size;
+        term_t* var__3586 = create_var(state->next_var_id++);
+        term_t* var__3588 = create_var(state->next_var_id++);
+        term_t* var__3594 = create_var(state->next_var_id++);
+        if (unify(state, create_list(var__3586, var__3588), arg1) &&
+            unify(state, var__3594, arg2)) {
+
+            do {
+    if (!positive_numbers_2(state, var__3588, var__3594)) { state->failed = true; break; }
+            } while (0);
+            if (!state->failed) return true;
+        }
+        /* Restore bindings for next clause */
+        state->bindings.size = saved_bindings_size;
+        state->failed = false;
+    }
+
+    return false; /* No clause matched */
+}
+bool map_double_2(prolog_state_t* state, term_t* arg1, term_t* arg2) {
+    /* Clause 1: map_double([],[]) */
+    {
+        int saved_bindings_size = state->bindings.size;
+        if (unify(state, create_nil(), arg1) &&
+            unify(state, create_nil(), arg2)) {
+
+            return true;
+        }
+        /* Restore bindings for next clause */
+        state->bindings.size = saved_bindings_size;
+        state->failed = false;
+    }
+    /* Clause 2: map_double([_3634|_3636],[_3642|_3644]) :- _3642 is _3634*2,map_double(_3636,_3644) */
+    {
+        int saved_bindings_size = state->bindings.size;
+        term_t* var__3634 = create_var(state->next_var_id++);
+        term_t* var__3636 = create_var(state->next_var_id++);
+        term_t* var__3642 = create_var(state->next_var_id++);
+        term_t* var__3644 = create_var(state->next_var_id++);
+        if (unify(state, create_list(var__3634, var__3636), arg1) &&
+            unify(state, create_list(var__3642, var__3644), arg2)) {
+
+            do {
+    if (!is_2(state, var__3642, create_compound("*", 2, (term_t*[]){var__3634, create_int(2)}))) { state->failed = true; break; }
+    if (!map_double_2(state, var__3636, var__3644)) { state->failed = true; break; }
+            } while (0);
+            if (!state->failed) return true;
+        }
+        /* Restore bindings for next clause */
+        state->bindings.size = saved_bindings_size;
+        state->failed = false;
+    }
+
+    return false; /* No clause matched */
+}
+bool all_cities_1(prolog_state_t* state, term_t* arg1) {
+    /* Clause 1: all_cities(_3692) :- findall(_3696,city(_3696),_3692) */
+    {
+        int saved_bindings_size = state->bindings.size;
+        term_t* var__3692 = create_var(state->next_var_id++);
+        term_t* var__3696 = create_var(state->next_var_id++);
+        if (unify(state, var__3692, arg1)) {
+
+            do {
+    /* findall(_3696, city(_3696), _3692) */
     {
         term_t** solutions = NULL;
         int solution_count = 0;
@@ -553,7 +835,8 @@ translate_body(findall(Template, Goal, Result), CCode, Depth) :-
         
         /* Enumerate solutions */
         while (true) {
-~w
+    if (!city_1(state, var__3696)) { state->failed = true; break; }
+
             if (state->failed) break;
             
             /* Collect solution */
@@ -568,80 +851,436 @@ translate_body(findall(Template, Goal, Result), CCode, Depth) :-
         /* Build result list */
         free_state(&findall_state);
     }
-', [Template, Goal, Result, GoalCode]).
-translate_body(Call, CCode, _) :-
-    % Regular predicate call
-    extract_predicate_info(Call, Name, Arity, Args),
-    sanitize_predicate_name(Name, SanitizedName),
-    format(atom(FuncName), '~w_~w', [SanitizedName, Arity]),
-    translate_call_args(Args, ArgStr),
-    format(atom(CCode), '    if (!~w(state~w)) { state->failed = true; break; }\n', [FuncName, ArgStr]).
+            } while (0);
+            if (!state->failed) return true;
+        }
+        /* Restore bindings for next clause */
+        state->bindings.size = saved_bindings_size;
+        state->failed = false;
+    }
 
-translate_call_args([], '').
-translate_call_args([Arg|Args], Result) :-
-    term_to_c_expr(Arg, CExpr),
-    translate_call_args(Args, Rest),
-    format(atom(Result), ', ~w~w', [CExpr, Rest]).
+    return false; /* No clause matched */
+}
+bool all_countries_1(prolog_state_t* state, term_t* arg1) {
+    /* Clause 1: all_countries(_826) :- findall(_830,country(_830,_832),_826) */
+    {
+        int saved_bindings_size = state->bindings.size;
+        term_t* var__3722 = create_var(state->next_var_id++);
+        term_t* var__3726 = create_var(state->next_var_id++);
+        term_t* var__832 = create_var(state->next_var_id++);
+        if (unify(state, var__826, arg1)) {
 
-%% escape_c_string(+InputCodes, -OutputCodes)
-% Escapes special characters for C string literals
-escape_c_string([], []).
-escape_c_string([10|Rest], [92, 110|EscapedRest]) :- % \n
-    !,
-    escape_c_string(Rest, EscapedRest).
-escape_c_string([13|Rest], [92, 114|EscapedRest]) :- % \r
-    !,
-    escape_c_string(Rest, EscapedRest).
-escape_c_string([9|Rest], [92, 116|EscapedRest]) :- % \t
-    !,
-    escape_c_string(Rest, EscapedRest).
-escape_c_string([34|Rest], [92, 34|EscapedRest]) :- % \"
-    !,
-    escape_c_string(Rest, EscapedRest).
-escape_c_string([92|Rest], [92, 92|EscapedRest]) :- % \\
-    !,
-    escape_c_string(Rest, EscapedRest).
-escape_c_string([C|Rest], [C|EscapedRest]) :-
-    escape_c_string(Rest, EscapedRest).
+            do {
+    /* findall(_830, country(_830,_832), _826) */
+    {
+        term_t** solutions = NULL;
+        int solution_count = 0;
+        prolog_state_t findall_state;
+        init_state(&findall_state);
+        
+        /* Enumerate solutions */
+        while (true) {
+    if (!country_2(state, var__830, var__832)) { state->failed = true; break; }
 
-term_to_c_expr(Var, Expr) :-
-    var(Var),
-    !,
-    format(atom(Expr), 'var_~w', [Var]).
-term_to_c_expr(Atom, Expr) :-
-    atom(Atom),
-    !,
-    atom_codes(Atom, Codes),
-    escape_c_string(Codes, EscapedCodes),
-    atom_codes(EscapedAtom, EscapedCodes),
-    format(atom(Expr), 'create_atom("~w")', [EscapedAtom]).
-term_to_c_expr(Int, Expr) :-
-    integer(Int),
-    !,
-    format(atom(Expr), 'create_int(~w)', [Int]).
-term_to_c_expr([], Expr) :-
-    !,
-    Expr = 'create_nil()'.
-term_to_c_expr([H|T], Expr) :-
-    !,
-    term_to_c_expr(H, HExpr),
-    term_to_c_expr(T, TExpr),
-    format(atom(Expr), 'create_list(~w, ~w)', [HExpr, TExpr]).
-term_to_c_expr(Compound, Expr) :-
-    Compound =.. [Functor|Args],
-    length(Args, Arity),
-    maplist(term_to_c_expr, Args, CArgs),
-    atomic_list_concat(CArgs, ', ', ArgsStr),
-    format(atom(Expr), 'create_compound("~w", ~w, (term_t*[]){~w})', [Functor, Arity, ArgsStr]).
+            if (state->failed) break;
+            
+            /* Collect solution */
+            solution_count++;
+            solutions = realloc(solutions, sizeof(term_t*) * solution_count);
+            /* Store template instance */
+            
+            /* Force backtracking */
+            if (!pop_choice_point(&findall_state)) break;
+        }
+        
+        /* Build result list */
+        free_state(&findall_state);
+    }
+            } while (0);
+            if (!state->failed) return true;
+        }
+        /* Restore bindings for next clause */
+        state->bindings.size = saved_bindings_size;
+        state->failed = false;
+    }
 
-%% generate_c_main(-MainCode)
-generate_c_main(MainCode) :-
-    MainCode = ''.
+    return false; /* No clause matched */
+}
+bool find_capitals_1(prolog_state_t* state, term_t* arg1) {
+    /* Clause 1: find_capitals(_850) :- findall(capital(_854,_856),capital(_854,_856),_850) */
+    {
+        int saved_bindings_size = state->bindings.size;
+        term_t* var__850 = create_var(state->next_var_id++);
+        term_t* var__854 = create_var(state->next_var_id++);
+        term_t* var__856 = create_var(state->next_var_id++);
+        if (unify(state, var__850, arg1)) {
 
-%% generate_c_footer(-Footer)
-generate_c_footer(Footer) :-
-    Footer = 
-'
+            do {
+    /* findall(capital(_854,_856), capital(_854,_856), _850) */
+    {
+        term_t** solutions = NULL;
+        int solution_count = 0;
+        prolog_state_t findall_state;
+        init_state(&findall_state);
+        
+        /* Enumerate solutions */
+        while (true) {
+    if (!capital_2(state, var__854, var__856)) { state->failed = true; break; }
+
+            if (state->failed) break;
+            
+            /* Collect solution */
+            solution_count++;
+            solutions = realloc(solutions, sizeof(term_t*) * solution_count);
+            /* Store template instance */
+            
+            /* Force backtracking */
+            if (!pop_choice_point(&findall_state)) break;
+        }
+        
+        /* Build result list */
+        free_state(&findall_state);
+    }
+            } while (0);
+            if (!state->failed) return true;
+        }
+        /* Restore bindings for next clause */
+        state->bindings.size = saved_bindings_size;
+        state->failed = false;
+    }
+
+    return false; /* No clause matched */
+}
+bool same_country_pair_2(prolog_state_t* state, term_t* arg1, term_t* arg2) {
+    /* Clause 1: same_country_pair(_880,_882) :- country(_886,_880),country(_886,_882),_880\=_882 */
+    {
+        int saved_bindings_size = state->bindings.size;
+        term_t* var__880 = create_var(state->next_var_id++);
+        term_t* var__882 = create_var(state->next_var_id++);
+        term_t* var__886 = create_var(state->next_var_id++);
+        if (unify(state, var__880, arg1) &&
+            unify(state, var__882, arg2)) {
+
+            do {
+    if (!country_2(state, var__886, var__880)) { state->failed = true; break; }
+    if (!country_2(state, var__886, var__882)) { state->failed = true; break; }
+    if (!neq_2(state, var__880, var__882)) { state->failed = true; break; }
+            } while (0);
+            if (!state->failed) return true;
+        }
+        /* Restore bindings for next clause */
+        state->bindings.size = saved_bindings_size;
+        state->failed = false;
+    }
+
+    return false; /* No clause matched */
+}
+bool factorial_2(prolog_state_t* state, term_t* arg1, term_t* arg2) {
+    /* Clause 1: factorial(0,1) :- ! */
+    {
+        int saved_bindings_size = state->bindings.size;
+        if (unify(state, create_int(0), arg1) &&
+            unify(state, create_int(1), arg2)) {
+
+            do {
+    perform_cut(state);
+            } while (0);
+            if (!state->failed) return true;
+        }
+        /* Restore bindings for next clause */
+        state->bindings.size = saved_bindings_size;
+        state->failed = false;
+    }
+    /* Clause 2: factorial(_934,_936) :- _934>0,_952 is _934-1,factorial(_952,_960),_936 is _934*_960 */
+    {
+        int saved_bindings_size = state->bindings.size;
+        term_t* var__934 = create_var(state->next_var_id++);
+        term_t* var__936 = create_var(state->next_var_id++);
+        term_t* var__952 = create_var(state->next_var_id++);
+        term_t* var__960 = create_var(state->next_var_id++);
+        if (unify(state, var__934, arg1) &&
+            unify(state, var__936, arg2)) {
+
+            do {
+    if (!gt_2(state, var__934, create_int(0))) { state->failed = true; break; }
+    if (!is_2(state, var__952, create_compound("-", 2, (term_t*[]){var__934, create_int(1)}))) { state->failed = true; break; }
+    if (!factorial_2(state, var__952, var__960)) { state->failed = true; break; }
+    if (!is_2(state, var__936, create_compound("*", 2, (term_t*[]){var__934, var__960}))) { state->failed = true; break; }
+            } while (0);
+            if (!state->failed) return true;
+        }
+        /* Restore bindings for next clause */
+        state->bindings.size = saved_bindings_size;
+        state->failed = false;
+    }
+
+    return false; /* No clause matched */
+}
+bool fibonacci_2(prolog_state_t* state, term_t* arg1, term_t* arg2) {
+    /* Clause 1: fibonacci(0,0) :- ! */
+    {
+        int saved_bindings_size = state->bindings.size;
+        if (unify(state, create_int(0), arg1) &&
+            unify(state, create_int(0), arg2)) {
+
+            do {
+    perform_cut(state);
+            } while (0);
+            if (!state->failed) return true;
+        }
+        /* Restore bindings for next clause */
+        state->bindings.size = saved_bindings_size;
+        state->failed = false;
+    }
+    /* Clause 2: fibonacci(1,1) :- ! */
+    {
+        int saved_bindings_size = state->bindings.size;
+        if (unify(state, create_int(1), arg1) &&
+            unify(state, create_int(1), arg2)) {
+
+            do {
+    perform_cut(state);
+            } while (0);
+            if (!state->failed) return true;
+        }
+        /* Restore bindings for next clause */
+        state->bindings.size = saved_bindings_size;
+        state->failed = false;
+    }
+    /* Clause 3: fibonacci(_1024,_1026) :- _1024>1,_1042 is _1024-1,_1054 is _1024-2,fibonacci(_1042,_1062),fibonacci(_1054,_1068),_1026 is _1062+_1068 */
+    {
+        int saved_bindings_size = state->bindings.size;
+        term_t* var__1024 = create_var(state->next_var_id++);
+        term_t* var__1026 = create_var(state->next_var_id++);
+        term_t* var__1042 = create_var(state->next_var_id++);
+        term_t* var__1054 = create_var(state->next_var_id++);
+        term_t* var__1062 = create_var(state->next_var_id++);
+        term_t* var__1068 = create_var(state->next_var_id++);
+        if (unify(state, var__1024, arg1) &&
+            unify(state, var__1026, arg2)) {
+
+            do {
+    if (!gt_2(state, var__1024, create_int(1))) { state->failed = true; break; }
+    if (!is_2(state, var__1042, create_compound("-", 2, (term_t*[]){var__1024, create_int(1)}))) { state->failed = true; break; }
+    if (!is_2(state, var__1054, create_compound("-", 2, (term_t*[]){var__1024, create_int(2)}))) { state->failed = true; break; }
+    if (!fibonacci_2(state, var__1042, var__1062)) { state->failed = true; break; }
+    if (!fibonacci_2(state, var__1054, var__1068)) { state->failed = true; break; }
+    if (!is_2(state, var__1026, create_compound("+", 2, (term_t*[]){var__1062, var__1068}))) { state->failed = true; break; }
+            } while (0);
+            if (!state->failed) return true;
+        }
+        /* Restore bindings for next clause */
+        state->bindings.size = saved_bindings_size;
+        state->failed = false;
+    }
+
+    return false; /* No clause matched */
+}
+bool gcd_3(prolog_state_t* state, term_t* arg1, term_t* arg2, term_t* arg3) {
+    /* Clause 1: gcd(_1120,0,_1120) :- ! */
+    {
+        int saved_bindings_size = state->bindings.size;
+        term_t* var__1120 = create_var(state->next_var_id++);
+        if (unify(state, var__1120, arg1) &&
+            unify(state, create_int(0), arg2) &&
+            unify(state, var__1120, arg3)) {
+
+            do {
+    perform_cut(state);
+            } while (0);
+            if (!state->failed) return true;
+        }
+        /* Restore bindings for next clause */
+        state->bindings.size = saved_bindings_size;
+        state->failed = false;
+    }
+    /* Clause 2: gcd(_1134,_1136,_1138) :- _1136>0,_1154 is _1134 mod _1136,gcd(_1136,_1154,_1138) */
+    {
+        int saved_bindings_size = state->bindings.size;
+        term_t* var__1134 = create_var(state->next_var_id++);
+        term_t* var__1136 = create_var(state->next_var_id++);
+        term_t* var__1138 = create_var(state->next_var_id++);
+        term_t* var__1154 = create_var(state->next_var_id++);
+        if (unify(state, var__1134, arg1) &&
+            unify(state, var__1136, arg2) &&
+            unify(state, var__1138, arg3)) {
+
+            do {
+    if (!gt_2(state, var__1136, create_int(0))) { state->failed = true; break; }
+    if (!is_2(state, var__1154, create_compound("mod", 2, (term_t*[]){var__1134, var__1136}))) { state->failed = true; break; }
+    if (!gcd_3(state, var__1136, var__1154, var__1138)) { state->failed = true; break; }
+            } while (0);
+            if (!state->failed) return true;
+        }
+        /* Restore bindings for next clause */
+        state->bindings.size = saved_bindings_size;
+        state->failed = false;
+    }
+
+    return false; /* No clause matched */
+}
+bool insert_sorted_3(prolog_state_t* state, term_t* arg1, term_t* arg2, term_t* arg3) {
+    /* Clause 1: insert_sorted(_1188,[],[_1188]) */
+    {
+        int saved_bindings_size = state->bindings.size;
+        term_t* var__1188 = create_var(state->next_var_id++);
+        if (unify(state, var__1188, arg1) &&
+            unify(state, create_nil(), arg2) &&
+            unify(state, create_list(var__1188, create_nil()), arg3)) {
+
+            return true;
+        }
+        /* Restore bindings for next clause */
+        state->bindings.size = saved_bindings_size;
+        state->failed = false;
+    }
+    /* Clause 2: insert_sorted(_1212,[_1204|_1206],[_1212,_1204|_1206]) :- _1212=<_1204,! */
+    {
+        int saved_bindings_size = state->bindings.size;
+        term_t* var__1212 = create_var(state->next_var_id++);
+        term_t* var__1204 = create_var(state->next_var_id++);
+        term_t* var__1206 = create_var(state->next_var_id++);
+        if (unify(state, var__1212, arg1) &&
+            unify(state, create_list(var__1204, var__1206), arg2) &&
+            unify(state, create_list(var__1212, create_list(var__1204, var__1206)), arg3)) {
+
+            do {
+    if (!lte_2(state, var__1212, var__1204)) { state->failed = true; break; }
+    perform_cut(state);
+            } while (0);
+            if (!state->failed) return true;
+        }
+        /* Restore bindings for next clause */
+        state->bindings.size = saved_bindings_size;
+        state->failed = false;
+    }
+    /* Clause 3: insert_sorted(_1266,[_1252|_1254],[_1252|_1262]) :- _1266>_1252,insert_sorted(_1266,_1254,_1262) */
+    {
+        int saved_bindings_size = state->bindings.size;
+        term_t* var__1266 = create_var(state->next_var_id++);
+        term_t* var__1252 = create_var(state->next_var_id++);
+        term_t* var__1254 = create_var(state->next_var_id++);
+        term_t* var__1262 = create_var(state->next_var_id++);
+        if (unify(state, var__1266, arg1) &&
+            unify(state, create_list(var__1252, var__1254), arg2) &&
+            unify(state, create_list(var__1252, var__1262), arg3)) {
+
+            do {
+    if (!gt_2(state, var__1266, var__1252)) { state->failed = true; break; }
+    if (!insert_sorted_3(state, var__1266, var__1254, var__1262)) { state->failed = true; break; }
+            } while (0);
+            if (!state->failed) return true;
+        }
+        /* Restore bindings for next clause */
+        state->bindings.size = saved_bindings_size;
+        state->failed = false;
+    }
+
+    return false; /* No clause matched */
+}
+bool insertion_sort_2(prolog_state_t* state, term_t* arg1, term_t* arg2) {
+    /* Clause 1: insertion_sort([],[]) */
+    {
+        int saved_bindings_size = state->bindings.size;
+        if (unify(state, create_nil(), arg1) &&
+            unify(state, create_nil(), arg2)) {
+
+            return true;
+        }
+        /* Restore bindings for next clause */
+        state->bindings.size = saved_bindings_size;
+        state->failed = false;
+    }
+    /* Clause 2: insertion_sort([_1308|_1310],_1316) :- insertion_sort(_1310,_1322),insert_sorted(_1308,_1322,_1316) */
+    {
+        int saved_bindings_size = state->bindings.size;
+        term_t* var__1308 = create_var(state->next_var_id++);
+        term_t* var__1310 = create_var(state->next_var_id++);
+        term_t* var__1316 = create_var(state->next_var_id++);
+        term_t* var__1322 = create_var(state->next_var_id++);
+        if (unify(state, create_list(var__1308, var__1310), arg1) &&
+            unify(state, var__1316, arg2)) {
+
+            do {
+    if (!insertion_sort_2(state, var__1310, var__1322)) { state->failed = true; break; }
+    if (!insert_sorted_3(state, var__1308, var__1322, var__1316)) { state->failed = true; break; }
+            } while (0);
+            if (!state->failed) return true;
+        }
+        /* Restore bindings for next clause */
+        state->bindings.size = saved_bindings_size;
+        state->failed = false;
+    }
+
+    return false; /* No clause matched */
+}
+bool main_0(prolog_state_t* state) {
+    /* Clause 1: main :- write(=== PL2C Comprehensive Test ===
+
+),write(Test 1: Facts and Rules
+),capital(uk,_1356),format(  Capital of UK: ~w
+,[_1356]),write(
+Test 2: List Operations
+),append([1,2],[3,4],_1410),format(  append([1,2], [3,4]) = ~w
+,[_1410]),member(2,[1,2,3]),write(  member(2, [1,2,3]) succeeded
+),write(
+Test 3: Arithmetic
+),factorial(5,_1464),format(  factorial(5) = ~w
+,[_1464]),write(
+Test 4: Cut Behavior
+),max(10,5,_1490),format(  max(10, 5) = ~w
+,[_1490]),min(10,5,_1512),format(  min(10, 5) = ~w
+,[_1512]),write(
+Test 5: Recursive Predicates
+),reverse_list([1,2,3],_1556),format(  reverse([1,2,3]) = ~w
+,[_1556]),write(
+=== All Tests Completed ===
+) */
+    {
+        int saved_bindings_size = state->bindings.size;
+        term_t* var__1356 = create_var(state->next_var_id++);
+        term_t* var__1410 = create_var(state->next_var_id++);
+        term_t* var__1464 = create_var(state->next_var_id++);
+        term_t* var__1490 = create_var(state->next_var_id++);
+        term_t* var__1512 = create_var(state->next_var_id++);
+        term_t* var__1556 = create_var(state->next_var_id++);
+        if (true) {
+
+            do {
+    if (!write_1(state, create_atom("=== PL2C Comprehensive Test ===\n\n"))) { state->failed = true; break; }
+    if (!write_1(state, create_atom("Test 1: Facts and Rules\n"))) { state->failed = true; break; }
+    if (!capital_2(state, create_atom("uk"), var__1356)) { state->failed = true; break; }
+    if (!format_2(state, create_atom("  Capital of UK: ~w\n"), create_list(var__1356, create_nil()))) { state->failed = true; break; }
+    if (!write_1(state, create_atom("\nTest 2: List Operations\n"))) { state->failed = true; break; }
+    if (!append_3(state, create_list(create_int(1), create_list(create_int(2), create_nil())), create_list(create_int(3), create_list(create_int(4), create_nil())), var__1410)) { state->failed = true; break; }
+    if (!format_2(state, create_atom("  append([1,2], [3,4]) = ~w\n"), create_list(var__1410, create_nil()))) { state->failed = true; break; }
+    if (!member_2(state, create_int(2), create_list(create_int(1), create_list(create_int(2), create_list(create_int(3), create_nil()))))) { state->failed = true; break; }
+    if (!write_1(state, create_atom("  member(2, [1,2,3]) succeeded\n"))) { state->failed = true; break; }
+    if (!write_1(state, create_atom("\nTest 3: Arithmetic\n"))) { state->failed = true; break; }
+    if (!factorial_2(state, create_int(5), var__1464)) { state->failed = true; break; }
+    if (!format_2(state, create_atom("  factorial(5) = ~w\n"), create_list(var__1464, create_nil()))) { state->failed = true; break; }
+    if (!write_1(state, create_atom("\nTest 4: Cut Behavior\n"))) { state->failed = true; break; }
+    if (!max_3(state, create_int(10), create_int(5), var__1490)) { state->failed = true; break; }
+    if (!format_2(state, create_atom("  max(10, 5) = ~w\n"), create_list(var__1490, create_nil()))) { state->failed = true; break; }
+    if (!min_3(state, create_int(10), create_int(5), var__1512)) { state->failed = true; break; }
+    if (!format_2(state, create_atom("  min(10, 5) = ~w\n"), create_list(var__1512, create_nil()))) { state->failed = true; break; }
+    if (!write_1(state, create_atom("\nTest 5: Recursive Predicates\n"))) { state->failed = true; break; }
+    if (!reverse_list_2(state, create_list(create_int(1), create_list(create_int(2), create_list(create_int(3), create_nil()))), var__1556)) { state->failed = true; break; }
+    if (!format_2(state, create_atom("  reverse([1,2,3]) = ~w\n"), create_list(var__1556, create_nil()))) { state->failed = true; break; }
+    if (!write_1(state, create_atom("\n=== All Tests Completed ===\n"))) { state->failed = true; break; }
+            } while (0);
+            if (!state->failed) return true;
+        }
+        /* Restore bindings for next clause */
+        state->bindings.size = saved_bindings_size;
+        state->failed = false;
+    }
+
+    return false; /* No clause matched */
+}
+
+
+
 /* Term creation functions */
 term_t* create_var(int id) {
     term_t* t = malloc(sizeof(term_t));
@@ -930,12 +1569,12 @@ int eval_arithmetic(prolog_state_t* state, term_t* expr) {
             int right = eval_arithmetic(state, t->data.compound.args[1]);
             return left << right;
         }
-        if (strcmp(t->data.compound.functor, "/\\\\") == 0 && t->data.compound.arity == 2) {
+        if (strcmp(t->data.compound.functor, "/\\") == 0 && t->data.compound.arity == 2) {
             int left = eval_arithmetic(state, t->data.compound.args[0]);
             int right = eval_arithmetic(state, t->data.compound.args[1]);
             return left & right;
         }
-        if (strcmp(t->data.compound.functor, "\\\\/") == 0 && t->data.compound.arity == 2) {
+        if (strcmp(t->data.compound.functor, "\\/") == 0 && t->data.compound.arity == 2) {
             int left = eval_arithmetic(state, t->data.compound.args[0]);
             int right = eval_arithmetic(state, t->data.compound.args[1]);
             return left | right;
@@ -1076,7 +1715,7 @@ bool format_2(prolog_state_t* state, term_t* arg1, term_t* arg2) {
 
 /* Additional I/O predicates */
 bool nl_0(prolog_state_t* state) {
-    printf("\\n");
+    printf("\n");
     return true;
 }
 
@@ -1154,7 +1793,7 @@ bool is_list_1(prolog_state_t* state, term_t* arg1) {
     if (t->type == TERM_NIL) return true;
     if (t->type != TERM_LIST) return false;
     
-    /* Check if it\'s a proper list (ends with NIL) */
+    /* Check if it's a proper list (ends with NIL) */
     while (t->type == TERM_LIST) {
         t = deref(state, t->data.list.tail);
     }
@@ -2038,7 +2677,7 @@ int main(int argc, char** argv) {
     prolog_state_t state;
     init_state(&state);
     
-    printf("Prolog-to-C compiled program\\n");
+    printf("Prolog-to-C compiled program\n");
     
     /* Call main/0 predicate if it exists */
     main_0(&state);
@@ -2046,36 +2685,3 @@ int main(int argc, char** argv) {
     free_state(&state);
     return 0;
 }
-'.
-
-%% write_c_file(+File, +CCode)
-write_c_file(File, CCode) :-
-    open(File, write, Stream),
-    write(Stream, CCode),
-    close(Stream).
-
-%% compile_file(+PrologFile, +OutputBase)
-% Compiles Prolog file to C and creates executable
-compile_file(PrologFile, OutputBase) :-
-    format(atom(CFile), '~w.c', [OutputBase]),
-    format(atom(ExeFile), '~w', [OutputBase]),
-    compile_prolog_to_c(PrologFile, CFile),
-    format(atom(CompileCmd), 'gcc -o ~w ~w -std=c99 -Wall', [ExeFile, CFile]),
-    shell(CompileCmd).
-
-%% verify_equivalence(+PrologFile)
-% Verifies that compiled C code produces same results as SWI-Prolog
-verify_equivalence(PrologFile) :-
-    % Run Prolog version
-    format(atom(PrologCmd), 'swipl -g main -t halt ~w > prolog_output.txt', [PrologFile]),
-    shell(PrologCmd),
-    
-    % Compile and run C version
-    atom_concat(Base, '.pl', PrologFile),
-    compile_file(PrologFile, Base),
-    format(atom(CCmd), './~w > c_output.txt', [Base]),
-    shell(CCmd),
-    
-    % Compare outputs
-    shell('diff prolog_output.txt c_output.txt'),
-    write('Verification successful: outputs match!\n').
