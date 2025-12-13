@@ -52,6 +52,7 @@ generate_c_header(Header) :-
 #include <stdlib.h>
 #include <string.h>
 #include <stdbool.h>
+#include <math.h>
 
 /* Prolog term representation */
 typedef enum {
@@ -140,6 +141,54 @@ bool is_2(prolog_state_t* state, term_t* arg1, term_t* arg2);
 void print_term(term_t* term);
 bool write_1(prolog_state_t* state, term_t* arg1);
 bool format_2(prolog_state_t* state, term_t* arg1, term_t* arg2);
+bool nl_0(prolog_state_t* state);
+bool tab_1(prolog_state_t* state, term_t* arg1);
+bool get_char_1(prolog_state_t* state, term_t* arg1);
+bool put_char_1(prolog_state_t* state, term_t* arg1);
+
+/* Type checking predicates (ISO) */
+bool atom_1(prolog_state_t* state, term_t* arg1);
+bool number_1(prolog_state_t* state, term_t* arg1);
+bool integer_1(prolog_state_t* state, term_t* arg1);
+bool var_1(prolog_state_t* state, term_t* arg1);
+bool nonvar_1(prolog_state_t* state, term_t* arg1);
+bool compound_1(prolog_state_t* state, term_t* arg1);
+bool atomic_1(prolog_state_t* state, term_t* arg1);
+bool is_list_1(prolog_state_t* state, term_t* arg1);
+bool ground_1(prolog_state_t* state, term_t* arg1);
+bool callable_1(prolog_state_t* state, term_t* arg1);
+
+/* Term comparison predicates (ISO) */
+bool term_lt_2(prolog_state_t* state, term_t* arg1, term_t* arg2);
+bool term_gt_2(prolog_state_t* state, term_t* arg1, term_t* arg2);
+bool term_lte_2(prolog_state_t* state, term_t* arg1, term_t* arg2);
+bool term_gte_2(prolog_state_t* state, term_t* arg1, term_t* arg2);
+bool compare_3(prolog_state_t* state, term_t* order, term_t* arg1, term_t* arg2);
+
+/* List predicates (ISO/SWI) */
+bool length_2(prolog_state_t* state, term_t* list, term_t* length);
+bool nth0_3(prolog_state_t* state, term_t* n, term_t* list, term_t* elem);
+bool nth1_3(prolog_state_t* state, term_t* n, term_t* list, term_t* elem);
+bool last_2(prolog_state_t* state, term_t* list, term_t* last);
+bool reverse_2(prolog_state_t* state, term_t* list, term_t* reversed);
+
+/* Atom/string predicates (ISO) */
+bool atom_codes_2(prolog_state_t* state, term_t* atom, term_t* codes);
+bool atom_chars_2(prolog_state_t* state, term_t* atom, term_t* chars);
+bool atom_length_2(prolog_state_t* state, term_t* atom, term_t* length);
+bool atom_concat_3(prolog_state_t* state, term_t* atom1, term_t* atom2, term_t* result);
+bool sub_atom_5(prolog_state_t* state, term_t* atom, term_t* before, term_t* length, term_t* after, term_t* sub);
+
+/* Term manipulation predicates (ISO) */
+bool functor_3(prolog_state_t* state, term_t* term, term_t* functor, term_t* arity);
+bool arg_3(prolog_state_t* state, term_t* n, term_t* term, term_t* arg);
+bool univ_2(prolog_state_t* state, term_t* term, term_t* list);
+bool copy_term_2(prolog_state_t* state, term_t* term, term_t* copy);
+
+/* Control predicates (ISO) */
+bool true_0(prolog_state_t* state);
+bool once_1(prolog_state_t* state, term_t* goal);
+bool ignore_1(prolog_state_t* state, term_t* goal);
 '.
 
 %% generate_predicate_declarations(+GroupedClauses, -Declarations)
@@ -244,6 +293,13 @@ sanitize_predicate_name('*', 'times') :- !.
 sanitize_predicate_name('/', 'div') :- !.
 sanitize_predicate_name('//', 'intdiv') :- !.
 sanitize_predicate_name('mod', 'mod') :- !.
+sanitize_predicate_name('@<', 'term_lt') :- !.
+sanitize_predicate_name('@>', 'term_gt') :- !.
+sanitize_predicate_name('@=<', 'term_lte') :- !.
+sanitize_predicate_name('@>=', 'term_gte') :- !.
+sanitize_predicate_name('=..', 'univ') :- !.
+sanitize_predicate_name('!', 'cut') :- !.
+sanitize_predicate_name('true', 'true') :- !.
 sanitize_predicate_name(Name, Name).
 
 %% translate_predicate_clauses(+Clauses, +Index, -CCode)
@@ -772,6 +828,92 @@ int eval_arithmetic(prolog_state_t* state, term_t* expr) {
             int right = eval_arithmetic(state, t->data.compound.args[1]);
             return left % right;
         }
+        if (strcmp(t->data.compound.functor, "rem") == 0 && t->data.compound.arity == 2) {
+            int left = eval_arithmetic(state, t->data.compound.args[0]);
+            int right = eval_arithmetic(state, t->data.compound.args[1]);
+            return left % right;
+        }
+        if (strcmp(t->data.compound.functor, "^") == 0 && t->data.compound.arity == 2) {
+            int left = eval_arithmetic(state, t->data.compound.args[0]);
+            int right = eval_arithmetic(state, t->data.compound.args[1]);
+            return (int)pow((double)left, (double)right);
+        }
+        if (strcmp(t->data.compound.functor, "**") == 0 && t->data.compound.arity == 2) {
+            int left = eval_arithmetic(state, t->data.compound.args[0]);
+            int right = eval_arithmetic(state, t->data.compound.args[1]);
+            return (int)pow((double)left, (double)right);
+        }
+        if (strcmp(t->data.compound.functor, ">>") == 0 && t->data.compound.arity == 2) {
+            int left = eval_arithmetic(state, t->data.compound.args[0]);
+            int right = eval_arithmetic(state, t->data.compound.args[1]);
+            return left >> right;
+        }
+        if (strcmp(t->data.compound.functor, "<<") == 0 && t->data.compound.arity == 2) {
+            int left = eval_arithmetic(state, t->data.compound.args[0]);
+            int right = eval_arithmetic(state, t->data.compound.args[1]);
+            return left << right;
+        }
+        if (strcmp(t->data.compound.functor, "/\\\\") == 0 && t->data.compound.arity == 2) {
+            int left = eval_arithmetic(state, t->data.compound.args[0]);
+            int right = eval_arithmetic(state, t->data.compound.args[1]);
+            return left & right;
+        }
+        if (strcmp(t->data.compound.functor, "\\\\/") == 0 && t->data.compound.arity == 2) {
+            int left = eval_arithmetic(state, t->data.compound.args[0]);
+            int right = eval_arithmetic(state, t->data.compound.args[1]);
+            return left | right;
+        }
+        if (strcmp(t->data.compound.functor, "xor") == 0 && t->data.compound.arity == 2) {
+            int left = eval_arithmetic(state, t->data.compound.args[0]);
+            int right = eval_arithmetic(state, t->data.compound.args[1]);
+            return left ^ right;
+        }
+        /* Unary functions */
+        if (strcmp(t->data.compound.functor, "abs") == 0 && t->data.compound.arity == 1) {
+            int val = eval_arithmetic(state, t->data.compound.args[0]);
+            return abs(val);
+        }
+        if (strcmp(t->data.compound.functor, "sign") == 0 && t->data.compound.arity == 1) {
+            int val = eval_arithmetic(state, t->data.compound.args[0]);
+            return (val > 0) - (val < 0);
+        }
+        if (strcmp(t->data.compound.functor, "-") == 0 && t->data.compound.arity == 1) {
+            int val = eval_arithmetic(state, t->data.compound.args[0]);
+            return -val;
+        }
+        if (strcmp(t->data.compound.functor, "+") == 0 && t->data.compound.arity == 1) {
+            return eval_arithmetic(state, t->data.compound.args[0]);
+        }
+        if (strcmp(t->data.compound.functor, "sqrt") == 0 && t->data.compound.arity == 1) {
+            int val = eval_arithmetic(state, t->data.compound.args[0]);
+            return (int)sqrt((double)val);
+        }
+        if (strcmp(t->data.compound.functor, "floor") == 0 && t->data.compound.arity == 1) {
+            int val = eval_arithmetic(state, t->data.compound.args[0]);
+            return (int)floor((double)val);
+        }
+        if (strcmp(t->data.compound.functor, "ceiling") == 0 && t->data.compound.arity == 1) {
+            int val = eval_arithmetic(state, t->data.compound.args[0]);
+            return (int)ceil((double)val);
+        }
+        if (strcmp(t->data.compound.functor, "round") == 0 && t->data.compound.arity == 1) {
+            int val = eval_arithmetic(state, t->data.compound.args[0]);
+            return (int)round((double)val);
+        }
+        if (strcmp(t->data.compound.functor, "truncate") == 0 && t->data.compound.arity == 1) {
+            int val = eval_arithmetic(state, t->data.compound.args[0]);
+            return (int)trunc((double)val);
+        }
+        if (strcmp(t->data.compound.functor, "min") == 0 && t->data.compound.arity == 2) {
+            int left = eval_arithmetic(state, t->data.compound.args[0]);
+            int right = eval_arithmetic(state, t->data.compound.args[1]);
+            return left < right ? left : right;
+        }
+        if (strcmp(t->data.compound.functor, "max") == 0 && t->data.compound.arity == 2) {
+            int left = eval_arithmetic(state, t->data.compound.args[0]);
+            int right = eval_arithmetic(state, t->data.compound.args[1]);
+            return left > right ? left : right;
+        }
     }
     
     return 0;
@@ -850,6 +992,596 @@ bool format_2(prolog_state_t* state, term_t* arg1, term_t* arg2) {
         }
     }
     
+    return true;
+}
+
+/* Additional I/O predicates */
+bool nl_0(prolog_state_t* state) {
+    printf("\\n");
+    return true;
+}
+
+bool tab_1(prolog_state_t* state, term_t* arg1) {
+    term_t* n = deref(state, arg1);
+    if (n->type != TERM_INT) {
+        state->failed = true;
+        return false;
+    }
+    for (int i = 0; i < n->data.int_val; i++) {
+        printf(" ");
+    }
+    return true;
+}
+
+bool get_char_1(prolog_state_t* state, term_t* arg1) {
+    int c = getchar();
+    if (c == EOF) {
+        return unify(state, arg1, create_atom("end_of_file"));
+    }
+    char str[2] = {(char)c, 0};
+    return unify(state, arg1, create_atom(str));
+}
+
+bool put_char_1(prolog_state_t* state, term_t* arg1) {
+    term_t* t = deref(state, arg1);
+    if (t->type != TERM_ATOM) {
+        state->failed = true;
+        return false;
+    }
+    if (strlen(t->data.atom) > 0) {
+        putchar(t->data.atom[0]);
+    }
+    return true;
+}
+
+/* Type checking predicates (ISO) */
+bool atom_1(prolog_state_t* state, term_t* arg1) {
+    term_t* t = deref(state, arg1);
+    return t->type == TERM_ATOM;
+}
+
+bool number_1(prolog_state_t* state, term_t* arg1) {
+    term_t* t = deref(state, arg1);
+    return t->type == TERM_INT;
+}
+
+bool integer_1(prolog_state_t* state, term_t* arg1) {
+    term_t* t = deref(state, arg1);
+    return t->type == TERM_INT;
+}
+
+bool var_1(prolog_state_t* state, term_t* arg1) {
+    term_t* t = deref(state, arg1);
+    return t->type == TERM_VAR;
+}
+
+bool nonvar_1(prolog_state_t* state, term_t* arg1) {
+    term_t* t = deref(state, arg1);
+    return t->type != TERM_VAR;
+}
+
+bool compound_1(prolog_state_t* state, term_t* arg1) {
+    term_t* t = deref(state, arg1);
+    return t->type == TERM_COMPOUND || t->type == TERM_LIST;
+}
+
+bool atomic_1(prolog_state_t* state, term_t* arg1) {
+    term_t* t = deref(state, arg1);
+    return t->type == TERM_ATOM || t->type == TERM_INT || t->type == TERM_NIL;
+}
+
+bool is_list_1(prolog_state_t* state, term_t* arg1) {
+    term_t* t = deref(state, arg1);
+    if (t->type == TERM_NIL) return true;
+    if (t->type != TERM_LIST) return false;
+    
+    /* Check if it\'s a proper list (ends with NIL) */
+    while (t->type == TERM_LIST) {
+        t = deref(state, t->data.list.tail);
+    }
+    return t->type == TERM_NIL;
+}
+
+bool ground_1(prolog_state_t* state, term_t* arg1) {
+    term_t* t = deref(state, arg1);
+    if (t->type == TERM_VAR) return false;
+    if (t->type == TERM_COMPOUND) {
+        for (int i = 0; i < t->data.compound.arity; i++) {
+            if (!ground_1(state, t->data.compound.args[i])) return false;
+        }
+    }
+    if (t->type == TERM_LIST) {
+        return ground_1(state, t->data.list.head) && ground_1(state, t->data.list.tail);
+    }
+    return true;
+}
+
+bool callable_1(prolog_state_t* state, term_t* arg1) {
+    term_t* t = deref(state, arg1);
+    return t->type == TERM_ATOM || t->type == TERM_COMPOUND;
+}
+
+/* Term comparison predicates (ISO) */
+int term_compare(term_t* t1, term_t* t2) {
+    /* Standard term ordering: var < number < atom < compound */
+    if (t1->type != t2->type) {
+        return t1->type - t2->type;
+    }
+    
+    switch (t1->type) {
+        case TERM_VAR:
+            return t1->data.var_id - t2->data.var_id;
+        case TERM_INT:
+            return t1->data.int_val - t2->data.int_val;
+        case TERM_ATOM:
+            return strcmp(t1->data.atom, t2->data.atom);
+        case TERM_NIL:
+            return 0;
+        case TERM_COMPOUND: {
+            int cmp = strcmp(t1->data.compound.functor, t2->data.compound.functor);
+            if (cmp != 0) return cmp;
+            cmp = t1->data.compound.arity - t2->data.compound.arity;
+            if (cmp != 0) return cmp;
+            for (int i = 0; i < t1->data.compound.arity; i++) {
+                cmp = term_compare(t1->data.compound.args[i], t2->data.compound.args[i]);
+                if (cmp != 0) return cmp;
+            }
+            return 0;
+        }
+        case TERM_LIST: {
+            int cmp = term_compare(t1->data.list.head, t2->data.list.head);
+            if (cmp != 0) return cmp;
+            return term_compare(t1->data.list.tail, t2->data.list.tail);
+        }
+        default:
+            return 0;
+    }
+}
+
+bool term_lt_2(prolog_state_t* state, term_t* arg1, term_t* arg2) {
+    term_t* t1 = deref(state, arg1);
+    term_t* t2 = deref(state, arg2);
+    return term_compare(t1, t2) < 0;
+}
+
+bool term_gt_2(prolog_state_t* state, term_t* arg1, term_t* arg2) {
+    term_t* t1 = deref(state, arg1);
+    term_t* t2 = deref(state, arg2);
+    return term_compare(t1, t2) > 0;
+}
+
+bool term_lte_2(prolog_state_t* state, term_t* arg1, term_t* arg2) {
+    term_t* t1 = deref(state, arg1);
+    term_t* t2 = deref(state, arg2);
+    return term_compare(t1, t2) <= 0;
+}
+
+bool term_gte_2(prolog_state_t* state, term_t* arg1, term_t* arg2) {
+    term_t* t1 = deref(state, arg1);
+    term_t* t2 = deref(state, arg2);
+    return term_compare(t1, t2) >= 0;
+}
+
+bool compare_3(prolog_state_t* state, term_t* order, term_t* arg1, term_t* arg2) {
+    term_t* t1 = deref(state, arg1);
+    term_t* t2 = deref(state, arg2);
+    int cmp = term_compare(t1, t2);
+    
+    term_t* result;
+    if (cmp < 0) {
+        result = create_atom("<");
+    } else if (cmp > 0) {
+        result = create_atom(">");
+    } else {
+        result = create_atom("=");
+    }
+    
+    return unify(state, order, result);
+}
+
+/* List predicates (ISO/SWI) */
+bool length_2(prolog_state_t* state, term_t* list, term_t* length) {
+    term_t* l = deref(state, list);
+    int count = 0;
+    
+    while (l->type == TERM_LIST) {
+        count++;
+        l = deref(state, l->data.list.tail);
+    }
+    
+    if (l->type != TERM_NIL) {
+        state->failed = true;
+        return false;
+    }
+    
+    return unify(state, length, create_int(count));
+}
+
+bool nth0_3(prolog_state_t* state, term_t* n, term_t* list, term_t* elem) {
+    term_t* n_deref = deref(state, n);
+    if (n_deref->type != TERM_INT) {
+        state->failed = true;
+        return false;
+    }
+    
+    int index = n_deref->data.int_val;
+    term_t* l = deref(state, list);
+    
+    for (int i = 0; i < index; i++) {
+        if (l->type != TERM_LIST) {
+            state->failed = true;
+            return false;
+        }
+        l = deref(state, l->data.list.tail);
+    }
+    
+    if (l->type != TERM_LIST) {
+        state->failed = true;
+        return false;
+    }
+    
+    return unify(state, elem, l->data.list.head);
+}
+
+bool nth1_3(prolog_state_t* state, term_t* n, term_t* list, term_t* elem) {
+    term_t* n_deref = deref(state, n);
+    if (n_deref->type != TERM_INT) {
+        state->failed = true;
+        return false;
+    }
+    
+    term_t* zero_based = create_int(n_deref->data.int_val - 1);
+    return nth0_3(state, zero_based, list, elem);
+}
+
+bool last_2(prolog_state_t* state, term_t* list, term_t* last) {
+    term_t* l = deref(state, list);
+    
+    if (l->type != TERM_LIST) {
+        state->failed = true;
+        return false;
+    }
+    
+    term_t* current_head = l->data.list.head;
+    l = deref(state, l->data.list.tail);
+    
+    while (l->type == TERM_LIST) {
+        current_head = l->data.list.head;
+        l = deref(state, l->data.list.tail);
+    }
+    
+    if (l->type != TERM_NIL) {
+        state->failed = true;
+        return false;
+    }
+    
+    return unify(state, last, current_head);
+}
+
+bool reverse_2(prolog_state_t* state, term_t* list, term_t* reversed) {
+    term_t* l = deref(state, list);
+    term_t* result = create_nil();
+    
+    while (l->type == TERM_LIST) {
+        result = create_list(l->data.list.head, result);
+        l = deref(state, l->data.list.tail);
+    }
+    
+    if (l->type != TERM_NIL) {
+        state->failed = true;
+        return false;
+    }
+    
+    return unify(state, reversed, result);
+}
+
+/* Atom/string predicates (ISO) */
+bool atom_codes_2(prolog_state_t* state, term_t* atom, term_t* codes) {
+    term_t* a = deref(state, atom);
+    term_t* c = deref(state, codes);
+    
+    if (a->type == TERM_ATOM) {
+        /* Convert atom to codes */
+        const char* str = a->data.atom;
+        term_t* result = create_nil();
+        
+        /* Build list in reverse, then reverse it */
+        for (int i = strlen(str) - 1; i >= 0; i--) {
+            result = create_list(create_int((unsigned char)str[i]), result);
+        }
+        
+        return unify(state, codes, result);
+    } else if (c->type == TERM_LIST || c->type == TERM_NIL) {
+        /* Convert codes to atom */
+        char buffer[1024];
+        int idx = 0;
+        term_t* l = c;
+        
+        while (l->type == TERM_LIST && idx < 1023) {
+            term_t* head = deref(state, l->data.list.head);
+            if (head->type != TERM_INT) {
+                state->failed = true;
+                return false;
+            }
+            buffer[idx++] = (char)head->data.int_val;
+            l = deref(state, l->data.list.tail);
+        }
+        
+        if (l->type != TERM_NIL) {
+            state->failed = true;
+            return false;
+        }
+        
+        buffer[idx] = 0;
+        return unify(state, atom, create_atom(buffer));
+    }
+    
+    state->failed = true;
+    return false;
+}
+
+bool atom_chars_2(prolog_state_t* state, term_t* atom, term_t* chars) {
+    term_t* a = deref(state, atom);
+    term_t* c = deref(state, chars);
+    
+    if (a->type == TERM_ATOM) {
+        /* Convert atom to chars */
+        const char* str = a->data.atom;
+        term_t* result = create_nil();
+        
+        for (int i = strlen(str) - 1; i >= 0; i--) {
+            char ch[2] = {str[i], 0};
+            result = create_list(create_atom(ch), result);
+        }
+        
+        return unify(state, chars, result);
+    } else if (c->type == TERM_LIST || c->type == TERM_NIL) {
+        /* Convert chars to atom */
+        char buffer[1024];
+        int idx = 0;
+        term_t* l = c;
+        
+        while (l->type == TERM_LIST && idx < 1023) {
+            term_t* head = deref(state, l->data.list.head);
+            if (head->type != TERM_ATOM) {
+                state->failed = true;
+                return false;
+            }
+            if (strlen(head->data.atom) > 0) {
+                buffer[idx++] = head->data.atom[0];
+            }
+            l = deref(state, l->data.list.tail);
+        }
+        
+        if (l->type != TERM_NIL) {
+            state->failed = true;
+            return false;
+        }
+        
+        buffer[idx] = 0;
+        return unify(state, atom, create_atom(buffer));
+    }
+    
+    state->failed = true;
+    return false;
+}
+
+bool atom_length_2(prolog_state_t* state, term_t* atom, term_t* length) {
+    term_t* a = deref(state, atom);
+    if (a->type != TERM_ATOM) {
+        state->failed = true;
+        return false;
+    }
+    return unify(state, length, create_int(strlen(a->data.atom)));
+}
+
+bool atom_concat_3(prolog_state_t* state, term_t* atom1, term_t* atom2, term_t* result) {
+    term_t* a1 = deref(state, atom1);
+    term_t* a2 = deref(state, atom2);
+    
+    if (a1->type != TERM_ATOM || a2->type != TERM_ATOM) {
+        state->failed = true;
+        return false;
+    }
+    
+    char buffer[2048];
+    snprintf(buffer, sizeof(buffer), "%s%s", a1->data.atom, a2->data.atom);
+    return unify(state, result, create_atom(buffer));
+}
+
+bool sub_atom_5(prolog_state_t* state, term_t* atom, term_t* before, term_t* length, term_t* after, term_t* sub) {
+    term_t* a = deref(state, atom);
+    if (a->type != TERM_ATOM) {
+        state->failed = true;
+        return false;
+    }
+    
+    term_t* b = deref(state, before);
+    term_t* l = deref(state, length);
+    term_t* aft = deref(state, after);
+    
+    /* Simple case: all positions specified */
+    if (b->type == TERM_INT && l->type == TERM_INT) {
+        int before_val = b->data.int_val;
+        int length_val = l->data.int_val;
+        int atom_len = strlen(a->data.atom);
+        
+        if (before_val < 0 || length_val < 0 || before_val + length_val > atom_len) {
+            state->failed = true;
+            return false;
+        }
+        
+        char buffer[1024];
+        strncpy(buffer, a->data.atom + before_val, length_val);
+        buffer[length_val] = 0;
+        
+        int after_val = atom_len - before_val - length_val;
+        
+        return unify(state, sub, create_atom(buffer)) &&
+               unify(state, after, create_int(after_val));
+    }
+    
+    /* Non-deterministic case would require backtracking */
+    state->failed = true;
+    return false;
+}
+
+/* Term manipulation predicates (ISO) */
+bool functor_3(prolog_state_t* state, term_t* term, term_t* functor, term_t* arity) {
+    term_t* t = deref(state, term);
+    
+    if (t->type == TERM_COMPOUND) {
+        return unify(state, functor, create_atom(t->data.compound.functor)) &&
+               unify(state, arity, create_int(t->data.compound.arity));
+    } else if (t->type == TERM_ATOM) {
+        return unify(state, functor, t) &&
+               unify(state, arity, create_int(0));
+    } else if (t->type == TERM_INT) {
+        return unify(state, functor, t) &&
+               unify(state, arity, create_int(0));
+    }
+    
+    /* Construction mode: functor and arity are given */
+    term_t* f = deref(state, functor);
+    term_t* a = deref(state, arity);
+    
+    if (f->type == TERM_ATOM && a->type == TERM_INT) {
+        if (a->data.int_val == 0) {
+            return unify(state, term, f);
+        } else {
+            /* Create compound with unbound variables as args */
+            term_t** args = malloc(sizeof(term_t*) * a->data.int_val);
+            for (int i = 0; i < a->data.int_val; i++) {
+                args[i] = create_var(i);
+            }
+            term_t* compound = create_compound(f->data.atom, a->data.int_val, args);
+            return unify(state, term, compound);
+        }
+    }
+    
+    state->failed = true;
+    return false;
+}
+
+bool arg_3(prolog_state_t* state, term_t* n, term_t* term, term_t* arg) {
+    term_t* n_deref = deref(state, n);
+    term_t* t = deref(state, term);
+    
+    if (n_deref->type != TERM_INT || t->type != TERM_COMPOUND) {
+        state->failed = true;
+        return false;
+    }
+    
+    int index = n_deref->data.int_val;
+    if (index < 1 || index > t->data.compound.arity) {
+        state->failed = true;
+        return false;
+    }
+    
+    return unify(state, arg, t->data.compound.args[index - 1]);
+}
+
+bool univ_2(prolog_state_t* state, term_t* term, term_t* list) {
+    term_t* t = deref(state, term);
+    term_t* l = deref(state, list);
+    
+    if (t->type != TERM_VAR) {
+        /* Term to list mode */
+        if (t->type == TERM_COMPOUND) {
+            /* Build list: [functor|args] */
+            term_t* result = create_nil();
+            for (int i = t->data.compound.arity - 1; i >= 0; i--) {
+                result = create_list(t->data.compound.args[i], result);
+            }
+            result = create_list(create_atom(t->data.compound.functor), result);
+            return unify(state, list, result);
+        } else if (t->type == TERM_ATOM || t->type == TERM_INT) {
+            /* Atomic term: [term] */
+            return unify(state, list, create_list(t, create_nil()));
+        }
+    } else if (l->type == TERM_LIST) {
+        /* List to term mode */
+        term_t* head = deref(state, l->data.list.head);
+        term_t* tail = deref(state, l->data.list.tail);
+        
+        if (tail->type == TERM_NIL) {
+            /* Single element list */
+            return unify(state, term, head);
+        } else if (tail->type == TERM_LIST && head->type == TERM_ATOM) {
+            /* Compound term */
+            int arity = 0;
+            term_t* arg_list = tail;
+            
+            /* Count arguments */
+            while (arg_list->type == TERM_LIST) {
+                arity++;
+                arg_list = deref(state, arg_list->data.list.tail);
+            }
+            
+            if (arg_list->type != TERM_NIL) {
+                state->failed = true;
+                return false;
+            }
+            
+            /* Build compound */
+            term_t** args = malloc(sizeof(term_t*) * arity);
+            arg_list = tail;
+            for (int i = 0; i < arity; i++) {
+                args[i] = arg_list->data.list.head;
+                arg_list = deref(state, arg_list->data.list.tail);
+            }
+            
+            term_t* compound = create_compound(head->data.atom, arity, args);
+            return unify(state, term, compound);
+        }
+    }
+    
+    state->failed = true;
+    return false;
+}
+
+bool copy_term_2(prolog_state_t* state, term_t* term, term_t* copy) {
+    term_t* t = deref(state, term);
+    
+    /* Simple shallow copy for now */
+    if (t->type == TERM_VAR) {
+        return unify(state, copy, create_var(t->data.var_id + 10000));
+    } else if (t->type == TERM_ATOM) {
+        return unify(state, copy, create_atom(t->data.atom));
+    } else if (t->type == TERM_INT) {
+        return unify(state, copy, create_int(t->data.int_val));
+    } else if (t->type == TERM_NIL) {
+        return unify(state, copy, create_nil());
+    } else if (t->type == TERM_LIST) {
+        term_t* new_tail;
+        copy_term_2(state, t->data.list.tail, &new_tail);
+        term_t* new_head;
+        copy_term_2(state, t->data.list.head, &new_head);
+        return unify(state, copy, create_list(new_head, new_tail));
+    } else if (t->type == TERM_COMPOUND) {
+        term_t** new_args = malloc(sizeof(term_t*) * t->data.compound.arity);
+        for (int i = 0; i < t->data.compound.arity; i++) {
+            copy_term_2(state, t->data.compound.args[i], &new_args[i]);
+        }
+        return unify(state, copy, create_compound(t->data.compound.functor, t->data.compound.arity, new_args));
+    }
+    
+    return false;
+}
+
+/* Control predicates (ISO) */
+bool true_0(prolog_state_t* state) {
+    return true;
+}
+
+bool once_1(prolog_state_t* state, term_t* goal) {
+    /* Execute goal once, removing choice points on success */
+    /* This is a simplified implementation */
+    return true;
+}
+
+bool ignore_1(prolog_state_t* state, term_t* goal) {
+    /* Always succeeds, ignoring goal failure */
     return true;
 }
 
