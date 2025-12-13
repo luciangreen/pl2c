@@ -832,7 +832,7 @@ translate_body(findall(Template, Goal, Result), CCode, Depth) :-
             solutions[solution_count - 1] = copy_term_helper(&findall_state, ~w, &var_offset);
             
             /* Check if there are more solutions */
-            /* If no choice point exists, we\'re done */
+            /* If no choice point exists, we are done */
             if (!findall_state.choice_stack) break;
             
             /* Restore bindings to initial state for next iteration */
