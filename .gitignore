@@ -16,6 +16,10 @@ comprehensive_output
 comprehensive_output.c
 test_*
 test_*.c
+iso_*
+iso_*.c
+comp_*
+comp_*.c
 
 # Test outputs
 prolog_output.txt

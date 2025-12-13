@@ -331,10 +331,8 @@ translate_predicate_clauses([Clause|Rest], Index, CCode) :-
 %% translate_single_clause(+Clause, +Index, -CCode)
 translate_single_clause((Head :- Body), Index, CCode) :-
     !,
-    collect_variables(Head, HeadVars),
-    collect_variables(Body, BodyVars),
-    append(HeadVars, BodyVars, AllVars),
-    sort(AllVars, UniqueVars),
+    % Use term_variables to get unique variables directly
+    term_variables((Head, Body), UniqueVars),
     generate_var_declarations(UniqueVars, VarDecls),
     translate_head_unifications_with_check(Head, Index, HeadCode),
     translate_body(Body, BodyCode, 0),
@@ -355,8 +353,8 @@ translate_single_clause((Head :- Body), Index, CCode) :-
 
 translate_single_clause(Head, Index, CCode) :-
     % Fact (clause without body)
-    collect_variables(Head, HeadVars),
-    sort(HeadVars, UniqueVars),
+    % Use term_variables to get unique variables directly
+    term_variables(Head, UniqueVars),
     generate_var_declarations(UniqueVars, VarDecls),
     translate_head_unifications_with_check(Head, Index, HeadCode),
     format(atom(CCode), 
@@ -501,6 +499,28 @@ translate_body((A, B), CCode, Depth) :-
     translate_body(A, ACode, Depth),
     translate_body(B, BCode, Depth),
     format(atom(CCode), '~w~w', [ACode, BCode]).
+translate_body((Cond -> Then ; Else), CCode, Depth) :-
+    !,
+    % If-then-else: if Cond succeeds, execute Then, otherwise execute Else
+    translate_body(Cond, CondCode, Depth),
+    translate_body(Then, ThenCode, Depth),
+    translate_body(Else, ElseCode, Depth),
+    format(atom(CCode),
+'    /* If-then-else: ~w -> ~w ; ~w */
+    {
+        int saved_size = state->bindings.size;
+~w
+        if (!state->failed) {
+            /* Condition succeeded, execute then branch */
+~w
+        } else {
+            /* Condition failed, execute else branch */
+            state->bindings.size = saved_size;
+            state->failed = false;
+~w
+        }
+    }
+', [Cond, Then, Else, CondCode, ThenCode, ElseCode]).
 translate_body((A ; B), CCode, Depth) :-
     !,
     % Disjunction: try A, if it fails try B
