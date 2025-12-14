@@ -2,6 +2,14 @@
 
 A comprehensive Prolog-to-C compiler that converts Prolog code into equivalent C code with explicit control flow structures.
 
+## Limitations and Notes
+
+- `findall/3`, `assertz/1`, predicates with multiple mathematical operations and combinations of member and multiple rules do not necessarily work.
+- There have been no benchmarks performed on pl2c because of lack of specific predicates, but despite the good algorithm and light design, further optimisation might minimise the logical if-then C structures to conditions unchecked elsewhere, approaching the speed of C.
+- The author designed pl2c to complement [Prolog to Starlog](https://github.com/luciangreen/prolog_to_starlog), so one can specify and run Starlog code quickly, but it's probably better to run the converted Prolog code in SWI-Prolog.
+- [SSI](https://github.com/luciangreen/SSI), [List Prolog Interpreter](https://github.com/luciangreen/listprologinterpreter), and this should have a findall and prime (argument number indicator) converter to predicates for efficiency and ability to be converted to C.
+- `assertz/1` should pass around non-code as variables, but code needs to be recompiled, slowing down the interpreter.
+
 ## Features
 
 - **Complete Prolog-to-C Translation**: Converts Prolog predicates into C functions with explicit loops and if-then statements
@@ -10,7 +18,7 @@ A comprehensive Prolog-to-C compiler that converts Prolog code into equivalent C
 - **Backtracking Support**: Choice-point stack management for proper failure propagation
 - **Nondeterministic Predicates**: Compiles nondeterministic predicates to resumable loops with saved execution state
 - **Conjunction Handling**: Proper combination of choice points for complex goal sequences
-- **findall/3 Implementation**: Solution enumeration in isolated generator contexts
+- **findall/3 Implementation**: Solution enumeration in isolated generator contexts (not working)
 - **Cut (!/0) Support**: Global cut barriers that prune local choice points and prevent clause fallback
 - **Verification Tool**: Single command to convert, compile, and verify equivalence with SWI-Prolog
 - **ISO Prolog Standard Predicates**: Comprehensive support for ISO standard built-in predicates including:
@@ -58,7 +66,7 @@ Global cut barriers:
 - Prune choice points at or above current level
 - Prevent fallback to alternative clauses after cut
 
-### 5. findall/3 Generator
+### 5. findall/3 Generator (not working)
 Solution enumeration:
 - Isolated execution state for goal
 - Collects all solutions via backtracking
@@ -131,7 +139,7 @@ color(green).
 color(blue).
 
 % Enumerate all solutions
-all_colors(Colors) :- findall(C, color(C), Colors).
+all_colors(Colors) :- findall(C, color(C), Colors). % not working
 ```
 
 ### Cut Example
@@ -179,7 +187,7 @@ The test suite includes:
    - Simple predicates (facts, rules)
    - Nondeterministic execution
    - Cut behavior
-   - findall/3 operation
+   - findall/3 operation (not working)
 
 3. **Equivalence Verification**
    - Compare output with SWI-Prolog
