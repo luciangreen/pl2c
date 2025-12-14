@@ -180,5 +180,14 @@ main :-
     write('\nTest 5: Recursive Predicates\n'),
     reverse_list([1,2,3], Rev),
     format('  reverse([1,2,3]) = ~w\n', [Rev]),
+
+	%all_cities(Cities),
+    %format('  all_cities(Cities) = ~w\n', [Cities]),
+
+	%all_countries(Countries),
+    %format('  all_countries(Countries) = ~w\n', [Countries]),
+
+	%find_capitals(Capitals), 
+    %format('  find_capitals(Capitals) = ~w\n', [Capitals]),
     
     write('\n=== All Tests Completed ===\n').
