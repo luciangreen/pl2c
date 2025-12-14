@@ -139,7 +139,7 @@ color(green).
 color(blue).
 
 % Enumerate all solutions
-all_colors(Colors) :- findall(C, color(C), Colors).. % not working
+all_colors(Colors) :- findall(C, color(C), Colors). % not working
 ```
 
 ### Cut Example
