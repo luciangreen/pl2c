@@ -133,7 +133,7 @@ Simplified implementations for meta-calling:
 
 Note: These are simplified implementations that handle basic cases. Full meta-call interpretation would require a complete goal interpreter.
 
-## Solution Collection
+## Solution Collection (not working)
 
 - `findall(Template, Goal, Result)` - Collects all solutions (already implemented)
 - `bagof(Template, Goal, Bag)` - Placeholder (not fully implemented)
