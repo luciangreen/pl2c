@@ -98,7 +98,7 @@ first_color(C) :- color(C), !.
 
 Multiple clauses create choice points for backtracking.
 
-#### 7. findall/3
+#### 7. findall/3 (not working)
 
 ```prolog
 all_colors(Colors) :- findall(C, color(C), Colors).
@@ -209,7 +209,7 @@ color(green).
 color(blue).
 
 main :-
-    findall(C, color(C), Colors),
+    findall(C, color(C), Colors), % not working
     format('All colors: ~w\n', [Colors]).
 ```
 
