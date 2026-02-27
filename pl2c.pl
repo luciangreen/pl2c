@@ -465,7 +465,7 @@ translate_head_unifications_with_check(Head, _, CCode) :-
     extract_predicate_info(Head, _, _, Args),
     translate_head_args_with_check(Args, 1, [], UnifyList),
     ( UnifyList = [] ->
-        CCode = '        if (true) {\n'
+        CCode = '        {\n'
     ;
         atomic_list_concat(UnifyList, ' &&\n            ', UnifyCondition),
         format(atom(CCode), '        if (~w) {\n', [UnifyCondition])
@@ -586,9 +586,7 @@ translate_body((A ; B), CCode, Depth) :-
     format(atom(CCode),
 '    /* Disjunction */
     push_choice_point(state, 0, 1);
-    if (!state->failed) {
 ~w
-    }
     if (state->failed) {
         pop_choice_point(state);
         state->failed = false;
