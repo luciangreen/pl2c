@@ -5,7 +5,7 @@ A comprehensive Prolog-to-C compiler that converts Prolog code into equivalent C
 ## Limitations and Notes
 
 - `findall/3` and `assert/1` do not necessarily work.
-- There have been no benchmarks performed on pl2c because of lack of specific predicates, but despite the good algorithm and light design, further optimisation might minimise the logical if-then C structures to conditions unchecked elsewhere, approaching the speed of C.
+- There have been no benchmarks performed on pl2c because of lack of specific predicates. Given the the good algorithm and light design, the optimisation to minimise the logical if-then C structures to conditions unchecked elsewhere, approaching the speed of C has been implemented.
 - The author designed pl2c to complement [Prolog to Starlog](https://github.com/luciangreen/prolog_to_starlog), so one can specify and run Starlog code quickly, but it's probably better to run the converted Prolog code in SWI-Prolog.
 - [SSI](https://github.com/luciangreen/SSI), [List Prolog Interpreter](https://github.com/luciangreen/listprologinterpreter), and this should have a findall and prime (argument number indicator) converter to predicates for efficiency and ability to be converted to C.
 - `assert/1` should pass around non-code as variables, but code needs to be recompiled, slowing down the interpreter.
