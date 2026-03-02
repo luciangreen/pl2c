@@ -190,7 +190,7 @@ Implementation strategy:
 - On backtracking, resume from saved choice point
 - Continue until all alternatives exhausted
 
-### 8. findall/3 Implementation (may not work)
+### 8. findall/3 Implementation
 
 Solution enumeration creates an isolated execution context:
 

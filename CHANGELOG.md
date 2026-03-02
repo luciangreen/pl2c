@@ -103,7 +103,7 @@ All notable changes to the pl2c project will be documented in this file.
 - Unification algorithm
 - Backtracking with choice points
 - Cut operation
-- findall/3 implementation (not working)
+- findall/3 implementation
 - Basic arithmetic operators
 - List and compound term support
 - Example programs
