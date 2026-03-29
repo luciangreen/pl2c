@@ -209,7 +209,7 @@ color(green).
 color(blue).
 
 main :-
-    findall(C, color(C), Colors), % not working
+    findall(C, color(C), Colors),
     format('All colors: ~w\n', [Colors]).
 ```
 

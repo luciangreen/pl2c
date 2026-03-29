@@ -55,6 +55,7 @@ generate_c_header(Header) :-
 #include <stdlib.h>
 #include <string.h>
 #include <stdbool.h>
+#include <stdint.h>
 #include <math.h>
 
 /* Prolog term representation */
@@ -105,6 +106,9 @@ typedef struct choice_point {
     struct choice_point* prev;
 } choice_point_t;
 
+/* Sentinel clause index indicating all clauses for a predicate have been exhausted */
+#define CLAUSE_EXHAUSTED_SENTINEL 9999
+
 /* Global state */
 typedef struct {
     choice_point_t* choice_stack;
@@ -112,6 +116,7 @@ typedef struct {
     int cut_level;
     bool failed;
     int next_var_id;
+    bool backtracking;  /* True when backtracking to find the next solution */
 } prolog_state_t;
 
 /* Function prototypes */
@@ -285,12 +290,174 @@ translate_predicate_group(Name/Arity-Clauses, CCode) :-
     translate_args_to_params(Args, Params),
     sanitize_predicate_name(Name, SanitizedName),
     format(atom(FuncName), '~w_~w', [SanitizedName, Arity]),
-    translate_predicate_clauses(Clauses, 1, ClausesCode),
-    format(atom(CCode), 
+    length(Clauses, NumClauses),
+    ( NumClauses > 1 ->
+        % Multiple clauses - generate nondeterministic version with choice points
+        translate_nondeterministic_predicate(Clauses, FuncName, Params, CCode)
+    ;
+        % Single clause - generate simple version without choice points
+        translate_predicate_clauses(Clauses, 1, ClausesCode),
+        format(atom(CCode),
 'bool ~w(prolog_state_t* state~w) {
 ~w
     return false; /* No clause matched */
-}', [FuncName, Params, ClausesCode]).
+}', [FuncName, Params, ClausesCode])
+    ).
+
+%% translate_nondeterministic_predicate(+Clauses, +FuncName, +Params, -CCode)
+% Generates code for a predicate with multiple clauses that supports backtracking via choice points
+translate_nondeterministic_predicate(Clauses, FuncName, Params, CCode) :-
+    length(Clauses, NumClauses),
+    translate_predicate_clauses_with_choicepoints(Clauses, FuncName, 1, NumClauses, ClausesCode),
+    format(atom(CCode),
+'bool ~w(prolog_state_t* state~w) {
+    /* Check if resuming from a choice point (only when backtracking) */
+    int start_clause = 1;
+    if (state->backtracking && state->choice_stack &&
+        state->choice_stack->predicate_id == (int)(intptr_t)&~w) {
+        start_clause = state->choice_stack->clause_index;
+        pop_choice_point(state);
+        /* Reset backtracking flag so inner calls start fresh */
+        state->backtracking = false;
+        /* Check for sentinel - all clauses exhausted */
+        if (start_clause >= CLAUSE_EXHAUSTED_SENTINEL) {
+            state->failed = true;
+            return false;
+        }
+    }
+
+~w
+    return false; /* No clause matched */
+}', [FuncName, Params, FuncName, ClausesCode]).
+
+%% translate_predicate_clauses_with_choicepoints(+Clauses, +FuncName, +Index, +TotalClauses, -CCode)
+translate_predicate_clauses_with_choicepoints([], _, _, _, '').
+translate_predicate_clauses_with_choicepoints([Clause|Rest], FuncName, Index, TotalClauses, CCode) :-
+    NextIndex is Index + 1,
+    ( NextIndex > TotalClauses -> IsLast = true ; IsLast = false ),
+    translate_single_clause_with_choicepoint(Clause, FuncName, Index, IsLast, ClauseCode),
+    translate_predicate_clauses_with_choicepoints(Rest, FuncName, NextIndex, TotalClauses, RestCode),
+    atomic_list_concat([ClauseCode, RestCode], '', CCode).
+
+%% translate_single_clause_with_choicepoint(+Clause, +FuncName, +Index, +IsLast, -CCode)
+translate_single_clause_with_choicepoint((Head :- Body), FuncName, Index, IsLast, CCode) :-
+    !,
+    term_variables((Head, Body), AllVars),
+    create_var_map(AllVars),
+    setup_call_cleanup(
+        true,
+        (
+            generate_var_declarations(AllVars, VarDecls),
+            translate_head_unifications_with_check(Head, Index, HeadCode),
+            translate_body(Body, BodyCode, 0),
+            copy_term((Head, Body), (HeadDisp, BodyDisp)),
+            numbervars((HeadDisp, BodyDisp), 0, _),
+            NextIndex is Index + 1,
+            ( IsLast ->
+                % Last clause: push sentinel (CLAUSE_EXHAUSTED_SENTINEL) to signal exhaustion on backtrack
+                format(atom(CCode),
+'    /* Clause ~w: ~w :- ~w */
+    if (start_clause <= ~w) {
+        int saved_bindings_size = state->bindings.size;
+        /* Push sentinel choice point before trying last clause */
+        push_choice_point(state, (int)(intptr_t)&~w, CLAUSE_EXHAUSTED_SENTINEL);
+~w~w
+            do {
+~w            } while (0);
+            if (!state->failed) return true;
+        }
+        /* Clause failed: remove the sentinel choice point */
+        if (state->choice_stack &&
+            state->choice_stack->predicate_id == (int)(intptr_t)&~w) {
+            pop_choice_point(state);
+        }
+        state->bindings.size = saved_bindings_size;
+        state->failed = false;
+    }
+', [Index, HeadDisp, BodyDisp, Index, FuncName, VarDecls, HeadCode, BodyCode, FuncName])
+            ;
+                % Not last clause: push choice point for next clause
+                format(atom(CCode),
+'    /* Clause ~w: ~w :- ~w */
+    if (start_clause <= ~w) {
+        int saved_bindings_size = state->bindings.size;
+        /* Push choice point for next clause before trying this one */
+        push_choice_point(state, (int)(intptr_t)&~w, ~w);
+~w~w
+            do {
+~w            } while (0);
+            if (!state->failed) return true;
+        }
+        /* Clause failed: remove choice point for this clause */
+        if (state->choice_stack &&
+            state->choice_stack->predicate_id == (int)(intptr_t)&~w) {
+            pop_choice_point(state);
+        }
+        state->bindings.size = saved_bindings_size;
+        state->failed = false;
+    }
+', [Index, HeadDisp, BodyDisp, Index, FuncName, NextIndex, VarDecls, HeadCode, BodyCode, FuncName])
+            )
+        ),
+        retractall(var_name_index_map(_, _))
+    ).
+
+translate_single_clause_with_choicepoint(Head, FuncName, Index, IsLast, CCode) :-
+    % Fact (clause without body)
+    term_variables(Head, AllVars),
+    create_var_map(AllVars),
+    setup_call_cleanup(
+        true,
+        (
+            generate_var_declarations(AllVars, VarDecls),
+            translate_head_unifications_with_check(Head, Index, HeadCode),
+            copy_term(Head, HeadDisp),
+            numbervars(HeadDisp, 0, _),
+            NextIndex is Index + 1,
+            ( IsLast ->
+                % Last clause: push sentinel (CLAUSE_EXHAUSTED_SENTINEL) to signal exhaustion on backtrack
+                format(atom(CCode),
+'    /* Clause ~w: ~w */
+    if (start_clause <= ~w) {
+        int saved_bindings_size = state->bindings.size;
+        /* Push sentinel choice point before trying last clause */
+        push_choice_point(state, (int)(intptr_t)&~w, CLAUSE_EXHAUSTED_SENTINEL);
+~w~w
+            return true;
+        }
+        /* Clause failed: remove the sentinel choice point */
+        if (state->choice_stack &&
+            state->choice_stack->predicate_id == (int)(intptr_t)&~w) {
+            pop_choice_point(state);
+        }
+        state->bindings.size = saved_bindings_size;
+        state->failed = false;
+    }
+', [Index, HeadDisp, Index, FuncName, VarDecls, HeadCode, FuncName])
+            ;
+                % Not last clause: push choice point for next clause
+                format(atom(CCode),
+'    /* Clause ~w: ~w */
+    if (start_clause <= ~w) {
+        int saved_bindings_size = state->bindings.size;
+        /* Push choice point for next clause before trying this one */
+        push_choice_point(state, (int)(intptr_t)&~w, ~w);
+~w~w
+            return true;
+        }
+        /* Clause failed: remove choice point for this clause */
+        if (state->choice_stack &&
+            state->choice_stack->predicate_id == (int)(intptr_t)&~w) {
+            pop_choice_point(state);
+        }
+        state->bindings.size = saved_bindings_size;
+        state->failed = false;
+    }
+', [Index, HeadDisp, Index, FuncName, NextIndex, VarDecls, HeadCode, FuncName])
+            )
+        ),
+        retractall(var_name_index_map(_, _))
+    ).
 
 clause_head((Head :- _), Head) :- !.
 clause_head(Head, Head).
@@ -595,8 +762,27 @@ translate_body((A ; B), CCode, Depth) :-
 ', [ACode, BCode]).
 translate_body(findall(Template, Goal, Result), CCode, Depth) :-
     !,
-    % findall/3: enumerate all solutions
-    translate_body(Goal, GoalCode, Depth),
+    % findall/3: enumerate all solutions using isolated findall_state
+    % Generate goal code (uses 'state' references which we replace with 'findall_state')
+    translate_body(Goal, GoalCodeTemplate, Depth),
+    % Replace state references in GoalCode to use findall_state:
+    %   'state->' -> 'findall_state.'  (for field access)
+    %   '(state,' -> '(&findall_state,'  (for function calls with args)
+    %   '(state)' -> '(&findall_state)'  (for no-arg function calls)
+    atom_codes(GoalCodeTemplate, GoalCodes),
+    atom_codes('state->', StateArrowCodes),
+    atom_codes('findall_state.', FindallStateDotCodes),
+    replace_all_occurrences(GoalCodes, StateArrowCodes, FindallStateDotCodes, TempCodes1),
+    atom_codes('(state,', StateCommaCodes),
+    atom_codes('(&findall_state,', FindallStateCommaCodes),
+    replace_all_occurrences(TempCodes1, StateCommaCodes, FindallStateCommaCodes, TempCodes2),
+    atom_codes('(state)', StateParenCodes),
+    atom_codes('(&findall_state)', FindallStateParenCodes),
+    replace_all_occurrences(TempCodes2, StateParenCodes, FindallStateParenCodes, ModifiedGoalCodes),
+    atom_codes(GoalCode, ModifiedGoalCodes),
+    % Get C expressions for Template and Result
+    term_to_c_expr(Template, TemplateExpr),
+    term_to_c_expr(Result, ResultExpr),
     format(atom(CCode),
 '    /* findall/3 */
     {
@@ -604,25 +790,85 @@ translate_body(findall(Template, Goal, Result), CCode, Depth) :-
         int solution_count = 0;
         prolog_state_t findall_state;
         init_state(&findall_state);
-        
-        /* Enumerate solutions */
+
+        /* Copy current bindings so goal can access outer variables */
+        findall_state.bindings.capacity = state->bindings.capacity;
+        findall_state.bindings.size = state->bindings.size;
+        if (state->bindings.size > 0) {
+            findall_state.bindings.bindings = malloc(sizeof(binding_t) * state->bindings.capacity);
+            if (findall_state.bindings.bindings) {
+                memcpy(findall_state.bindings.bindings, state->bindings.bindings,
+                       sizeof(binding_t) * state->bindings.size);
+            }
+        }
+        findall_state.next_var_id = state->next_var_id;
+
+        /* Save initial bindings for restoration between iterations */
+        int initial_bindings_size = findall_state.bindings.size;
+        int initial_bindings_capacity = findall_state.bindings.capacity;
+        binding_t* initial_bindings_copy = NULL;
+        if (initial_bindings_size > 0) {
+            initial_bindings_copy = malloc(sizeof(binding_t) * initial_bindings_capacity);
+            if (initial_bindings_copy) {
+                memcpy(initial_bindings_copy, findall_state.bindings.bindings,
+                       sizeof(binding_t) * initial_bindings_size);
+            }
+        }
+
+        /* Enumerate all solutions */
         while (true) {
+            findall_state.failed = false;
+            /* Execute the goal in findall_state */
 ~w
-            if (state->failed) break;
-            
-            /* Collect solution */
+            if (findall_state.failed) break;
+
+            /* Collect solution: copy the instantiated template */
             solution_count++;
             solutions = realloc(solutions, sizeof(term_t*) * solution_count);
-            /* Store template instance */
-            
-            /* Force backtracking */
-            if (!pop_choice_point(&findall_state)) break;
+            if (solutions) {
+                int var_offset = findall_state.next_var_id;
+                solutions[solution_count - 1] = copy_term_helper(&findall_state, ~w, &var_offset);
+            }
+
+            /* Check if there are more solutions via choice points */
+            if (!findall_state.choice_stack) break;
+
+            /* Enable backtracking to resume from the next clause */
+            findall_state.backtracking = true;
+
+            /* Restore bindings to before the goal was called */
+            if (findall_state.bindings.bindings) free(findall_state.bindings.bindings);
+            findall_state.bindings.size = initial_bindings_size;
+            findall_state.bindings.capacity = initial_bindings_capacity;
+            if (initial_bindings_size > 0 && initial_bindings_copy) {
+                findall_state.bindings.bindings = malloc(sizeof(binding_t) * initial_bindings_capacity);
+                if (findall_state.bindings.bindings) {
+                    memcpy(findall_state.bindings.bindings, initial_bindings_copy,
+                           sizeof(binding_t) * initial_bindings_size);
+                }
+            } else {
+                findall_state.bindings.bindings = NULL;
+            }
         }
-        
-        /* Build result list */
+
+        /* Clean up */
+        if (initial_bindings_copy) free(initial_bindings_copy);
+
+        /* Build result list: iterate backwards over solutions array to produce forward-ordered list */
+        term_t* result_list = create_nil();
+        for (int i = solution_count - 1; i >= 0; i--) {
+            result_list = create_list(solutions[i], result_list);
+        }
+        if (solutions) free(solutions);
+
+        /* Unify Result with the collected solutions list */
+        if (!unify(state, ~w, result_list)) {
+            state->failed = true;
+        }
+
         free_state(&findall_state);
     }
-', [GoalCode]).
+', [GoalCode, TemplateExpr, ResultExpr]).
 translate_body(Call, CCode, _) :-
     % Regular predicate call
     extract_predicate_info(Call, Name, Arity, Args),
@@ -636,6 +882,19 @@ translate_call_args([Arg|Args], Result) :-
     term_to_c_expr(Arg, CExpr),
     translate_call_args(Args, Rest),
     format(atom(Result), ', ~w~w', [CExpr, Rest]).
+
+%% replace_all_occurrences(+Input, +Pattern, +Replacement, -Output)
+% Replaces all occurrences of Pattern (as a list of codes) in Input with Replacement
+replace_all_occurrences([], _, _, []).
+replace_all_occurrences(Input, Pattern, Replacement, Output) :-
+    append(Pattern, Rest, Input),
+    !,
+    % Found a match - replace it and continue scanning
+    append(Replacement, RestOutput, Output),
+    replace_all_occurrences(Rest, Pattern, Replacement, RestOutput).
+replace_all_occurrences([C|Rest], Pattern, Replacement, [C|Output]) :-
+    % No match at this position - keep character and advance
+    replace_all_occurrences(Rest, Pattern, Replacement, Output).
 
 %% escape_c_string(+InputCodes, -OutputCodes)
 % Escapes special characters for C string literals
@@ -2112,6 +2371,7 @@ void init_state(prolog_state_t* state) {
     state->cut_level = 0;
     state->failed = false;
     state->next_var_id = 1000;
+    state->backtracking = false;
 }
 
 void free_state(prolog_state_t* state) {
